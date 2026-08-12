@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Movie } from "./types";
@@ -44,11 +45,13 @@ async function findArtwork(filePath: string, stem: string) {
 }
 
 async function walk(directory: string, root: string, files: string[]) {
-  let entries;
+  let entries: Dirent[];
   try {
     entries = await fs.readdir(directory, { withFileTypes: true });
-  } catch {
-    return;
+  } catch (error) {
+    const relative = path.relative(root, directory) || ".";
+    const reason = error instanceof Error ? error.message : "Unknown filesystem error";
+    throw new Error(`Cannot read media directory "${relative}": ${reason}`);
   }
 
   for (const entry of entries) {
