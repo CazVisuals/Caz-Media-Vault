@@ -36,7 +36,7 @@ export default function TvHome() {
   return (
     <main className="tv-shell">
       <header className="topbar">
-        <Link href="/tv" className="brand focusable" data-focusable="true"><span>CAZ</span> MEDIA VAULT</Link>
+        <Link href="/tv" className="brand focusable" data-focusable="true"><span>CONSTANT’S</span> HUB</Link>
         <nav><Link href="/tv" className="focusable" data-focusable="true">Movies</Link><Link href="/settings" className="focusable" data-focusable="true">Admin</Link></nav>
       </header>
 

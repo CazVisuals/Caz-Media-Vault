@@ -1,7 +1,7 @@
 services:
   media-vault:
     build: .
-    container_name: caz-media-vault
+    container_name: constants-hub
     restart: unless-stopped
     environment:
       MEDIA_ROOT: /media
@@ -20,7 +20,7 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: caz-media-vault-tunnel
+    container_name: constants-hub-tunnel
     restart: unless-stopped
     profiles: ["tunnel"]
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}

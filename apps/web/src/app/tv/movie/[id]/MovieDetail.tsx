@@ -13,7 +13,9 @@ export default function MovieDetail({ id }: { id: string }) {
 
   useEffect(() => {
     const resumeTimer = window.setTimeout(() => {
-      setResume(Number(localStorage.getItem(`cmv-progress:${id}`)) || 0);
+      const current = localStorage.getItem(`constants-hub-progress:${id}`);
+      const legacy = localStorage.getItem(`cmv-progress:${id}`);
+      setResume(Number(current || legacy) || 0);
     }, 0);
     fetch(`/api/media/library/${id}`, { cache: "no-store" })
       .then(async (response) => {
@@ -32,12 +34,12 @@ export default function MovieDetail({ id }: { id: string }) {
   return <main className="detail-shell" style={background ? { backgroundImage: `linear-gradient(90deg, #05070b 10%, rgba(5,7,11,.88) 52%, rgba(5,7,11,.45)), url(${background})` } : undefined}>
     <Link href="/tv" className="back-link focusable" data-focusable="true">← Browse</Link>
     <section className="detail-content">
-      <p className="eyebrow">CAZ MEDIA VAULT</p><h1>{movie.title}</h1>
+      <p className="eyebrow">CONSTANT’S HUB</p><h1>{movie.title}</h1>
       <div className="metadata"><span>{movie.year || "Year unknown"}</span>{movie.runtimeMinutes ? <span>{movie.runtimeMinutes} min</span> : null}{movie.genres.map((genre) => <span key={genre}>{genre}</span>)}{movie.rating !== null ? <span>★ {movie.rating.toFixed(1)}</span> : null}</div>
       <p className="overview">{movie.overview || "Ready to play from your private Synology library."}</p>
       <div className="hero-actions">
         <Link href={`/tv/watch/${movie.id}`} className="primary-button focusable" data-focusable="true">▶ {resume > 30 ? "Resume" : "Play"}</Link>
-        {resume > 30 ? <button className="secondary-button focusable" data-focusable="true" onClick={() => { localStorage.removeItem(`cmv-progress:${id}`); setResume(0); }}>Start over</button> : null}
+        {resume > 30 ? <button className="secondary-button focusable" data-focusable="true" onClick={() => { localStorage.removeItem(`constants-hub-progress:${id}`); localStorage.removeItem(`cmv-progress:${id}`); setResume(0); }}>Start over</button> : null}
       </div>
       <small className="file-label">{movie.fileName}</small>
     </section>

@@ -9,7 +9,7 @@ export function MediaCard({ movie }: { movie: Movie }) {
       <div className="poster-shell">
         {/* Native images keep local NAS artwork compatible with older TV browsers. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        {movie.posterUrl ? <img src={movie.posterUrl} alt="" className="poster" /> : <div className="poster-fallback"><span>CMV</span></div>}
+        {movie.posterUrl ? <img src={movie.posterUrl} alt="" className="poster" /> : <div className="poster-fallback"><span>CH</span></div>}
         {movie.rating !== null ? <span className="rating">★ {movie.rating.toFixed(1)}</span> : null}
       </div>
       <strong>{movie.title}</strong>

@@ -1,4 +1,4 @@
-# Caz Media Vault
+# Constant’s Hub
 
 Private, NAS-backed home cinema built with Next.js 16.
 

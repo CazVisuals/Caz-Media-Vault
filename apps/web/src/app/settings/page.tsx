@@ -39,7 +39,7 @@ export default function SettingsPage() {
   }, []);
 
   return <main className="admin-shell">
-    <header className="admin-header"><div><Link href="/tv">← TV Mode</Link><p className="eyebrow">CAZ MEDIA VAULT</p><h1>System Status</h1></div><button className="primary-button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? "Checking…" : "Refresh"}</button></header>
+    <header className="admin-header"><div><Link href="/tv">← TV Mode</Link><p className="eyebrow">CONSTANT’S HUB</p><h1>System Status</h1></div><button className="primary-button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? "Checking…" : "Refresh"}</button></header>
     {error ? <div className="state-card error">{error}</div> : null}
     <section className="status-grid">
       <StatusCard label="Synology NAS" title="Media Storage" state={health?.media === "available" ? "Connected" : health ? "Unavailable" : "Checking"} good={health?.media === "available"}><p>The configured MEDIA_ROOT is checked directly by the server.</p></StatusCard>
