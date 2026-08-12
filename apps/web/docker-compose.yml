@@ -10,7 +10,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - "${MEDIA_HOST_PATH:-/volume1/Caz Visuals/video}:/media:${MEDIA_MOUNT_MODE:-ro}"
+      - "${MEDIA_HOST_PATH:-/volume1/video}:/media:${MEDIA_MOUNT_MODE:-ro}"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s

@@ -38,7 +38,7 @@ Do not commit `.env.local`, Cloudflare tunnel credentials, API tokens, or NAS cr
 
 ## Synology Container Manager
 
-The included Compose file defaults to your DS223 media folder, `/volume1/Caz Visuals/video`, and mounts it read-only at `/media`:
+The included Compose file defaults to your confirmed DS223 shared folder, `/volume1/video`, and mounts it read-only at `/media`:
 
 ```bash
 docker compose up -d --build
