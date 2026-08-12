@@ -2,6 +2,9 @@ services:
   media-vault:
     build: .
     container_name: constants-hub
+    # Synology shared-folder ACLs commonly block the image's unprivileged UID.
+    # The media bind mount remains read-only by default.
+    user: "0:0"
     restart: unless-stopped
     environment:
       MEDIA_ROOT: /media
