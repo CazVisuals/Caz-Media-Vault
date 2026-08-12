@@ -38,10 +38,10 @@ Do not commit `.env.local`, Cloudflare tunnel credentials, API tokens, or NAS cr
 
 ## Synology Container Manager
 
-The included Compose file defaults to `/volume1/video` on the Synology and mounts it read-only at `/media`:
+The included Compose file defaults to your DS223 media folder, `/volume1/Caz Visuals/video`, and mounts it read-only at `/media`:
 
 ```bash
-MEDIA_HOST_PATH=/volume1/video docker compose up -d --build
+docker compose up -d --build
 ```
 
 Read-only mode supports browsing and playback. To enable the confirmed Inbox organizer, explicitly set `MEDIA_MOUNT_MODE=rw`; the application still restricts moves to sources inside `/media/Inbox` and refuses overwrites.
