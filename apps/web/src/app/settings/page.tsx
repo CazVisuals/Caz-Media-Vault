@@ -1,379 +1,56 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type ConnectionState = "checking" | "connected" | "error";
-
-type ScanResponse = {
-  success: boolean;
-  root?: string;
-  scannedAt?: string;
-  items?: unknown[];
-  error?: string;
-};
-
-type MetadataResponse = {
-  success: boolean;
-  movie?: {
-    id: number;
-    title: string;
-  } | null;
-  error?: string;
-};
+type Health = { status: "ok" | "degraded"; media: "available" | "unavailable"; tmdbConfigured: boolean };
 
 export default function SettingsPage() {
-  const [nasStatus, setNasStatus] =
-    useState<ConnectionState>("checking");
+  const [health, setHealth] = useState<Health | null>(null);
+  const [movieCount, setMovieCount] = useState<number | null>(null);
+  const [lastScan, setLastScan] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
 
-  const [tmdbStatus, setTmdbStatus] =
-    useState<ConnectionState>("checking");
-
-  const [mediaRoot, setMediaRoot] =
-    useState("/Volumes/video");
-
-  const [itemCount, setItemCount] =
-    useState(0);
-
-  const [lastScan, setLastScan] =
-    useState<string | null>(null);
-
-  const [message, setMessage] =
-    useState("");
-
-  async function checkConnections() {
-    setNasStatus("checking");
-    setTmdbStatus("checking");
-    setMessage("");
-
+  async function refresh() {
+    setRefreshing(true);
+    setError("");
     try {
-      const response = await fetch(
-        "/api/media/scan",
-        {
-          cache: "no-store",
-        }
-      );
-
-      const result =
-        (await response.json()) as ScanResponse;
-
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.error ||
-            "NAS connection failed."
-        );
-      }
-
-      setNasStatus("connected");
-      setMediaRoot(
-        result.root || "/Volumes/video"
-      );
-      setItemCount(
-        result.items?.length ?? 0
-      );
-      setLastScan(
-        result.scannedAt ?? null
-      );
-    } catch {
-      setNasStatus("error");
-    }
-
-    try {
-      const response = await fetch(
-        "/api/media/metadata?title=Supergirl&year=2026",
-        {
-          cache: "no-store",
-        }
-      );
-
-      const result =
-        (await response.json()) as MetadataResponse;
-
-      if (!response.ok || !result.success) {
-        throw new Error(
-          result.error ||
-            "TMDB connection failed."
-        );
-      }
-
-      setTmdbStatus("connected");
-    } catch {
-      setTmdbStatus("error");
+      const [healthResponse, libraryResponse] = await Promise.all([
+        fetch("/api/health", { cache: "no-store" }),
+        fetch("/api/media/library", { cache: "no-store" }),
+      ]);
+      const healthResult = await healthResponse.json() as Health;
+      const libraryResult = await libraryResponse.json() as { success: boolean; movieCount?: number; scannedAt?: string; error?: string };
+      setHealth(healthResult);
+      if (!libraryResponse.ok || !libraryResult.success) throw new Error(libraryResult.error || "Library scan failed.");
+      setMovieCount(libraryResult.movieCount ?? 0);
+      setLastScan(libraryResult.scannedAt ?? null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "System check failed.");
+    } finally {
+      setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    void checkConnections();
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
-  function formatDate(value: string | null) {
-    if (!value) {
-      return "Not scanned yet";
-    }
+  return <main className="admin-shell">
+    <header className="admin-header"><div><Link href="/tv">← TV Mode</Link><p className="eyebrow">CAZ MEDIA VAULT</p><h1>System Status</h1></div><button className="primary-button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? "Checking…" : "Refresh"}</button></header>
+    {error ? <div className="state-card error">{error}</div> : null}
+    <section className="status-grid">
+      <StatusCard label="Synology NAS" title="Media Storage" state={health?.media === "available" ? "Connected" : health ? "Unavailable" : "Checking"} good={health?.media === "available"}><p>The configured MEDIA_ROOT is checked directly by the server.</p></StatusCard>
+      <StatusCard label="Movie Metadata" title="TMDB" state={health?.tmdbConfigured ? "Configured" : health ? "Optional" : "Checking"} good={Boolean(health?.tmdbConfigured)}><p>Metadata enriches the catalog when available; local titles and artwork remain the fallback.</p></StatusCard>
+      <StatusCard label="Library" title="Movies Ready" state={movieCount === null ? "Checking" : String(movieCount)} good={movieCount !== null}><p>{lastScan ? `Last scanned ${new Date(lastScan).toLocaleString()}.` : "Waiting for the first scan."}</p></StatusCard>
+      <StatusCard label="Playback" title="Secure Streaming" state="Ready" good><p>ID-based streaming supports byte ranges, seeking, and Resume playback.</p></StatusCard>
+    </section>
+    <section className="admin-panel"><p className="eyebrow">ORGANIZER</p><h2>Inbox-only safety</h2><p>Organizer mutations are limited to files already inside Inbox. Existing destinations are never overwritten.</p><Link className="secondary-button" href="/organize">Open Organizer</Link></section>
+  </main>;
+}
 
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-      return value;
-    }
-
-    return new Intl.DateTimeFormat(
-      "en-US",
-      {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }
-    ).format(date);
-  }
-
-  function statusBadge(
-    status: ConnectionState
-  ) {
-    if (status === "checking") {
-      return (
-        <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300">
-          Checking...
-        </span>
-      );
-    }
-
-    if (status === "connected") {
-      return (
-        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
-          ● Connected
-        </span>
-      );
-    }
-
-    return (
-      <span className="rounded-full border border-red-500/20 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-300">
-        ● Error
-      </span>
-    );
-  }
-
-  async function refreshLibrary() {
-    setMessage("");
-
-    await checkConnections();
-
-    setMessage(
-      "Library scan completed."
-    );
-  }
-
-  return (
-    <main className="min-h-screen bg-[#07090f] text-white">
-      <header className="border-b border-white/10 bg-[#0b0e16]">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
-          <div>
-            <a
-              href="/"
-              className="text-sm text-white/40 transition hover:text-white"
-            >
-              ← Home
-            </a>
-
-            <h1 className="mt-2 text-2xl font-bold">
-              Settings
-            </h1>
-          </div>
-
-          <button
-            type="button"
-            onClick={() =>
-              void refreshLibrary()
-            }
-            className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold transition hover:bg-indigo-500"
-          >
-            Refresh Library
-          </button>
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-5xl px-6 py-10">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-indigo-400">
-            Media Vault
-          </p>
-
-          <h2 className="mt-2 text-4xl font-bold">
-            System Settings
-          </h2>
-
-          <p className="mt-3 text-white/45">
-            Connection status and configuration
-            for your home media library.
-          </p>
-        </div>
-
-        {message ? (
-          <div className="mt-8 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-200">
-            {message}
-          </div>
-        ) : null}
-
-        <section className="mt-8 space-y-5">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="text-sm text-white/40">
-                  Synology NAS
-                </p>
-
-                <h3 className="mt-1 text-xl font-semibold">
-                  Media Storage
-                </h3>
-              </div>
-
-              {statusBadge(nasStatus)}
-            </div>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-3">
-              <div className="rounded-2xl bg-black/20 p-4">
-                <p className="text-xs uppercase tracking-wider text-white/30">
-                  Media Root
-                </p>
-
-                <p className="mt-2 break-all text-sm text-white/70">
-                  {mediaRoot}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-black/20 p-4">
-                <p className="text-xs uppercase tracking-wider text-white/30">
-                  Items Found
-                </p>
-
-                <p className="mt-2 text-xl font-semibold">
-                  {itemCount}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-black/20 p-4">
-                <p className="text-xs uppercase tracking-wider text-white/30">
-                  Last Scan
-                </p>
-
-                <p className="mt-2 text-sm text-white/70">
-                  {formatDate(lastScan)}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="text-sm text-white/40">
-                  Movie Metadata
-                </p>
-
-                <h3 className="mt-1 text-xl font-semibold">
-                  TMDB
-                </h3>
-              </div>
-
-              {statusBadge(tmdbStatus)}
-            </div>
-
-            <p className="mt-5 max-w-2xl text-sm leading-6 text-white/45">
-              TMDB provides movie titles,
-              release years, descriptions,
-              ratings, genres, and poster
-              artwork for Media Vault.
-            </p>
-
-            <div className="mt-5 rounded-2xl bg-black/20 p-4">
-              <p className="text-xs uppercase tracking-wider text-white/30">
-                API Credential
-              </p>
-
-              <p className="mt-2 text-sm text-white/70">
-                TMDB_READ_ACCESS_TOKEN
-              </p>
-
-              <p className="mt-1 text-xs text-white/30">
-                Stored securely in .env.local
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-            <p className="text-sm text-white/40">
-              Organizer
-            </p>
-
-            <h3 className="mt-1 text-xl font-semibold">
-              Safety
-            </h3>
-
-            <div className="mt-5 space-y-3 text-sm text-white/55">
-              <p>
-                ✓ Files must remain inside{" "}
-                <span className="text-white/80">
-                  {mediaRoot}
-                </span>
-              </p>
-
-              <p>
-                ✓ Existing destination files
-                are not overwritten
-              </p>
-
-              <p>
-                ✓ Movies require confirmation
-                before being moved
-              </p>
-
-              <p>
-                ✓ Genre folders are created
-                automatically when needed
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-8 grid gap-4 sm:grid-cols-3">
-          <a
-            href="/movies"
-            className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-indigo-500/40"
-          >
-            <p className="text-2xl">
-              🎬
-            </p>
-
-            <p className="mt-3 font-semibold">
-              Movies
-            </p>
-          </a>
-
-          <a
-            href="/organize"
-            className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-indigo-500/40"
-          >
-            <p className="text-2xl">
-              🗂️
-            </p>
-
-            <p className="mt-3 font-semibold">
-              Organizer
-            </p>
-          </a>
-
-          <a
-            href="/recent"
-            className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-indigo-500/40"
-          >
-            <p className="text-2xl">
-              🕐
-            </p>
-
-            <p className="mt-3 font-semibold">
-              Recently Added
-            </p>
-          </a>
-        </section>
-      </div>
-    </main>
-  );
+function StatusCard({ label, title, state, good, children }: { label: string; title: string; state: string; good: boolean; children: React.ReactNode }) {
+  return <article className="status-card"><div className="status-card-top"><div><small>{label}</small><h2>{title}</h2></div><span className={good ? "status-good" : "status-neutral"}>{state}</span></div>{children}</article>;
 }

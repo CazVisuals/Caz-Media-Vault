@@ -10,6 +10,8 @@ export type Movie = {
   genres: string[];
   overview: string | null;
   rating: number | null;
+  runtimeMinutes: number | null;
+  tmdbId: number | null;
   posterUrl: string | null;
   backdropUrl: string | null;
 };

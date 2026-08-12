@@ -1,0 +1,29 @@
+services:
+  media-vault:
+    build: .
+    container_name: caz-media-vault
+    restart: unless-stopped
+    environment:
+      MEDIA_ROOT: /media
+      MEDIA_INBOX: /media/Inbox
+      TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      - "${MEDIA_HOST_PATH:-/volume1/video}:/media:${MEDIA_MOUNT_MODE:-ro}"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: caz-media-vault-tunnel
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      media-vault:
+        condition: service_healthy

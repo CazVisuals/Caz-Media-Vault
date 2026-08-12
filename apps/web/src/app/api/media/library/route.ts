@@ -1,11 +1,12 @@
 import { buildLibrary } from "@/lib/media/catalog";
+import { enrichMovies } from "@/lib/tmdb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const movies = await buildLibrary();
+    const movies = await enrichMovies(await buildLibrary());
     return Response.json({
       success: true,
       scannedAt: new Date().toISOString(),

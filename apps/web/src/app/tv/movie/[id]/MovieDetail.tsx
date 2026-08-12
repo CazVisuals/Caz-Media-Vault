@@ -28,11 +28,12 @@ export default function MovieDetail({ id }: { id: string }) {
   if (error) return <main className="detail-shell"><div className="state-card error">{error}</div><Link href="/tv" className="secondary-button focusable" data-focusable="true">Back to movies</Link></main>;
   if (!movie) return <main className="detail-shell"><div className="state-card">Loading movie…</div></main>;
 
-  return <main className="detail-shell" style={movie.posterUrl ? { backgroundImage: `linear-gradient(90deg, #05070b 10%, rgba(5,7,11,.88) 52%, rgba(5,7,11,.45)), url(${movie.posterUrl})` } : undefined}>
+  const background = movie.backdropUrl || movie.posterUrl;
+  return <main className="detail-shell" style={background ? { backgroundImage: `linear-gradient(90deg, #05070b 10%, rgba(5,7,11,.88) 52%, rgba(5,7,11,.45)), url(${background})` } : undefined}>
     <Link href="/tv" className="back-link focusable" data-focusable="true">← Browse</Link>
     <section className="detail-content">
       <p className="eyebrow">CAZ MEDIA VAULT</p><h1>{movie.title}</h1>
-      <div className="metadata"><span>{movie.year || "Year unknown"}</span>{movie.genre ? <span>{movie.genre}</span> : null}{movie.rating !== null ? <span>★ {movie.rating.toFixed(1)}</span> : null}</div>
+      <div className="metadata"><span>{movie.year || "Year unknown"}</span>{movie.runtimeMinutes ? <span>{movie.runtimeMinutes} min</span> : null}{movie.genres.map((genre) => <span key={genre}>{genre}</span>)}{movie.rating !== null ? <span>★ {movie.rating.toFixed(1)}</span> : null}</div>
       <p className="overview">{movie.overview || "Ready to play from your private Synology library."}</p>
       <div className="hero-actions">
         <Link href={`/tv/watch/${movie.id}`} className="primary-button focusable" data-focusable="true">▶ {resume > 30 ? "Resume" : "Play"}</Link>
