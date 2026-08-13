@@ -76,7 +76,9 @@ button, input { font: inherit; }
 .admin-panel { margin-top: 1.2rem; }
 .admin-panel .secondary-button { margin-top: 1rem; }
 .organizer-list { display: grid; gap: 1rem; margin-top: 2rem; }
-.organizer-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto; align-items: center; gap: 1.2rem; padding: 1.5rem; background: #10141d; border: 1px solid #ffffff16; border-radius: 1rem; }
+.organizer-card { display: grid; grid-template-columns: 88px minmax(0, 1fr) minmax(0, 1.5fr) auto; align-items: center; gap: 1.2rem; padding: 1.5rem; background: #10141d; border: 1px solid #ffffff16; border-radius: 1rem; }
+.organizer-poster { width: 88px; aspect-ratio: 2/3; object-fit: cover; border-radius: .65rem; background: #080b11; }
+.artwork-ready { display: block; margin-top: .7rem; color: #86efac !important; }
 .organizer-card small { color: var(--muted); letter-spacing: .12em; }
 .organizer-card h2 { margin: .4rem 0; }
 .organizer-card p { margin: .4rem 0 0; color: var(--muted); overflow-wrap: anywhere; }
