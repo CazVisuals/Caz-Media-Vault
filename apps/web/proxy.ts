@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE_NAME, verifySessionToken } from "@/lib/auth/session";
 
 function requestHostname(request: NextRequest) {
-  const forwarded = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const host = forwarded || request.headers.get("host") || "";
+  const host = request.headers.get("host") || "";
   if (host.startsWith("[")) return host.slice(1, host.indexOf("]"));
   return host.split(":")[0].toLowerCase();
 }
@@ -20,7 +19,12 @@ function isPublicAuthRoute(pathname: string) {
 }
 
 export async function proxy(request: NextRequest) {
-  if (process.env.PUBLIC_AUTH_ENABLED !== "true" || isPrivateHostname(requestHostname(request))) {
+  const cameThroughCloudflare = Boolean(
+    request.headers.get("cf-ray") || request.headers.get("cf-connecting-ip"),
+  );
+  const directPrivateRequest = !cameThroughCloudflare && isPrivateHostname(requestHostname(request));
+
+  if (process.env.PUBLIC_AUTH_ENABLED !== "true" || directPrivateRequest) {
     return NextResponse.next();
   }
 
