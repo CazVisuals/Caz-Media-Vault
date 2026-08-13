@@ -23,6 +23,7 @@ export default function OrganizePage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [moving, setMoving] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/media/scan", { cache: "no-store" }).then(async (response) => {
@@ -54,13 +55,14 @@ export default function OrganizePage() {
   }, []);
 
   async function move(movie: Preview) {
-    if (!movie.ready || !window.confirm(`Organize ${movie.fileName}?\n\nInbox → ${movie.destination}`)) return;
+    if (!movie.ready) return;
     setMoving(movie.source); setError(""); setMessage("");
     try {
       const response = await fetch("/api/media/move", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceRelativePath: movie.source, destinationRelativePath: movie.destination }) });
       const result = await response.json() as { success: boolean; message?: string; error?: string };
       if (!response.ok || !result.success) throw new Error(result.error || "Move failed.");
       setMovies((current) => current.filter((item) => item.source !== movie.source));
+      setConfirming(null);
       setMessage(result.message || "Movie organized.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Move failed."); }
     finally { setMoving(null); }
@@ -70,6 +72,6 @@ export default function OrganizePage() {
     <p className="overview">Only new video files inside Inbox are shown. Every destination is previewed and requires confirmation.</p>
     {message ? <div className="state-card">{message}</div> : null}{error ? <div className="state-card error">{error}</div> : null}{loading ? <div className="state-card">Scanning Inbox…</div> : null}
     {!loading && !error && movies.length === 0 ? <div className="state-card">Inbox has no video files waiting to be organized.</div> : null}
-    <section className="organizer-list">{movies.map((movie) => <article className="organizer-card" key={movie.source}><div><small>INBOX FILE</small><h2>{movie.title}</h2><p>{movie.fileName}</p></div><div className="destination"><small>DESTINATION</small><p>{movie.ready ? movie.destination : "Checking metadata…"}</p></div><button className="primary-button" disabled={!movie.ready || moving === movie.source} onClick={() => void move(movie)}>{moving === movie.source ? "Moving…" : "Organize"}</button></article>)}</section>
+    <section className="organizer-list">{movies.map((movie) => <article className="organizer-card" key={movie.source}><div><small>INBOX FILE</small><h2>{movie.title}</h2><p>{movie.fileName}</p></div><div className="destination"><small>DESTINATION</small><p>{movie.ready ? movie.destination : "Checking metadata…"}</p></div><div className="organizer-actions">{confirming === movie.source ? <><button className="primary-button" disabled={moving === movie.source} onClick={() => void move(movie)}>{moving === movie.source ? "Moving…" : "Confirm move"}</button><button className="secondary-button" disabled={moving === movie.source} onClick={() => setConfirming(null)}>Cancel</button></> : <button className="primary-button" disabled={!movie.ready || moving !== null} onClick={() => { setError(""); setMessage(""); setConfirming(movie.source); }}>Organize</button>}</div></article>)}</section>
   </main>;
 }
