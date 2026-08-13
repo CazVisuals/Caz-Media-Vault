@@ -38,12 +38,20 @@ Do not commit `.env.local`, Cloudflare tunnel credentials, API tokens, or NAS cr
 
 ## Synology Container Manager
 
-The included Compose file defaults to your confirmed DS223 shared folder, `/volume1/video`, and mounts it read-only at `/media`:
+The included Compose file defaults to your confirmed DS223 shared folder, `/volume1/video`, and mounts it read/write at `/media` for the approved Inbox organizer and conversion queue:
 
 ```bash
 docker compose up -d --build
 ```
 
-Read-only mode supports browsing and playback. To enable the confirmed Inbox organizer, explicitly set `MEDIA_MOUNT_MODE=rw`; the application still restricts moves to sources inside `/media/Inbox` and refuses overwrites.
+The organizer still restricts moves to sources inside `/media/Inbox`, rejects paths outside the media root, blocks unsafe symlink destinations, and refuses overwrites.
 
-The optional `tunnel` profile runs the existing Cloudflare Tunnel connector. Supply `CLOUDFLARE_TUNNEL_TOKEN` through Container Manager or a local uncommitted environment file, then start with `docker compose --profile tunnel up -d`. The token must never be added to Git.
+The Cloudflare connector reads `TUNNEL_TOKEN` from a local uncommitted `.env` file. The token must never be added to Git.
+
+## Media compatibility and conversion
+
+Open `/settings/media` to inspect the real container, video codec, audio codec, resolution, and mobile compatibility of every movie. The Docker image includes FFprobe and FFmpeg.
+
+`Convert incompatible` scans both the existing library and Inbox, then converts only incompatible files one at a time to H.264/AAC MP4. Each conversion is written to a temporary file and verified before replacement. The original is preserved under `/media/.constants-hub/originals` and is never deleted.
+
+The DS223 has limited CPU resources, so full-length conversions can take many hours. Keep the NAS powered on and monitor the persistent queue on the Media Compatibility page. Protect the public application with Cloudflare Access before exposing administrative mutation routes.
