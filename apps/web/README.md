@@ -54,4 +54,6 @@ Open `/settings/media` to inspect the real container, video codec, audio codec, 
 
 `Convert incompatible` scans both the existing library and Inbox, then converts only incompatible files one at a time to H.264/AAC MP4. Each conversion is written to a temporary file and verified before replacement. The original is preserved under `/media/.constants-hub/originals` and is never deleted.
 
+The container health cycle also scans for newly added incompatible media once per minute and queues it automatically. The Media Compatibility page remains available for queue monitoring and manual scans.
+
 The DS223 has limited CPU resources, so full-length conversions can take many hours. Keep the NAS powered on and monitor the persistent queue on the Media Compatibility page. Protect the public application with Cloudflare Access before exposing administrative mutation routes.
