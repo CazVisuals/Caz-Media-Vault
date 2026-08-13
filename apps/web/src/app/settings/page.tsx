@@ -47,7 +47,7 @@ export default function SettingsPage() {
       <StatusCard label="Library" title="Movies Ready" state={movieCount === null ? "Checking" : String(movieCount)} good={movieCount !== null}><p>{lastScan ? `Last scanned ${new Date(lastScan).toLocaleString()}.` : "Waiting for the first scan."}</p></StatusCard>
       <StatusCard label="Playback" title="Secure Streaming" state="Ready" good><p>ID-based streaming supports byte ranges, seeking, and Resume playback.</p></StatusCard>
     </section>
-    <section className="admin-panel"><p className="eyebrow">ORGANIZER</p><h2>Inbox-only safety</h2><p>Organizer mutations are limited to files already inside Inbox. Existing destinations are never overwritten.</p><Link className="secondary-button" href="/organize">Open Organizer</Link></section>
+    <section className="admin-panel"><p className="eyebrow">MEDIA TOOLS</p><h2>Compatibility & Organizer</h2><p>Inspect real codecs, convert incompatible movies for mobile playback, and safely organize Inbox files.</p><div className="hero-actions"><Link className="secondary-button" href="/settings/media">Media Compatibility</Link><Link className="secondary-button" href="/organize">Open Organizer</Link></div></section>
   </main>;
 }
 
