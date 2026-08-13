@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { getMediaRoot } from "@/lib/media/catalog";
+import { scheduleAutomaticConversionScan } from "@/lib/media/conversion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,7 @@ export async function GET() {
   const root = getMediaRoot();
   try {
     const entries = await fs.readdir(root);
+    scheduleAutomaticConversionScan();
     return Response.json({
       status: "ok",
       media: "available",
