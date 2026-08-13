@@ -35,7 +35,9 @@ export default function MovieDetail({ id }: { id: string }) {
     <Link href="/tv" className="back-link focusable" data-focusable="true">← Browse</Link>
     <section className="detail-content">
       <p className="eyebrow">CONSTANT’S HUB</p><h1>{movie.title}</h1>
-      <div className="metadata"><span>{movie.year || "Year unknown"}</span>{movie.runtimeMinutes ? <span>{movie.runtimeMinutes} min</span> : null}{movie.genres.map((genre) => <span key={genre}>{genre}</span>)}{movie.rating !== null ? <span>★ {movie.rating.toFixed(1)}</span> : null}</div>
+      {movie.tagline ? <p className="tagline">{movie.tagline}</p> : null}
+      <div className="metadata"><span>{movie.year || "Year unknown"}</span>{movie.certification ? <span>{movie.certification}</span> : null}{movie.runtimeMinutes ? <span>{movie.runtimeMinutes} min</span> : null}{movie.genres.map((genre) => <span key={genre}>{genre}</span>)}{movie.rating !== null ? <span>★ {movie.rating.toFixed(1)}</span> : null}</div>
+      {movie.collection ? <p className="collection-label">Part of the {movie.collection} collection</p> : null}
       <p className="overview">{movie.overview || "Ready to play from your private Synology library."}</p>
       <div className="hero-actions">
         <Link href={`/tv/watch/${movie.id}`} className="primary-button focusable" data-focusable="true">▶ {resume > 30 ? "Resume" : "Play"}</Link>
