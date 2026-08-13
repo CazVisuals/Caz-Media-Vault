@@ -12,6 +12,7 @@ button, input { font: inherit; }
 .brand span { color: #9a83ff; }
 .topbar nav { display: flex; gap: .7rem; }
 .topbar nav a { padding: .8rem 1.15rem; border-radius: .7rem; color: #d8dce5; }
+.nav-button { padding: .8rem 1.15rem; color: #d8dce5; background: transparent; border: 0; border-radius: .7rem; cursor: pointer; }
 .hero { min-height: 72vh; display: flex; align-items: flex-end; padding: 9rem 5vw 5rem; background-size: cover; background-position: center 24%; }
 .empty-hero { background: radial-gradient(circle at 75% 20%, #382b7550, transparent 42%), linear-gradient(150deg, #080b12, #05070b); }
 .hero-content { max-width: 700px; }
