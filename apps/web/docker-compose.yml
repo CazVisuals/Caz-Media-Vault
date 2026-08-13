@@ -10,6 +10,10 @@ services:
       MEDIA_ROOT: /media
       MEDIA_INBOX: /media/Inbox
       TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN:-}
+      PUBLIC_AUTH_ENABLED: ${PUBLIC_AUTH_ENABLED:-false}
+      AUTH_USERNAME: ${AUTH_USERNAME:-}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      AUTH_SECRET: ${AUTH_SECRET:-}
     ports:
       - "3000:3000"
     volumes:
