@@ -9,9 +9,16 @@ type SearchMovie = {
   poster_path?: string | null;
   backdrop_path?: string | null;
   genre_ids?: number[];
+  popularity?: number;
 };
 
-type DetailsMovie = SearchMovie & { runtime?: number | null; genres?: { id: number; name: string }[] };
+type DetailsMovie = SearchMovie & {
+  runtime?: number | null;
+  genres?: { id: number; name: string }[];
+  tagline?: string;
+  belongs_to_collection?: { name?: string } | null;
+  release_dates?: { results?: { iso_3166_1?: string; release_dates?: { certification?: string; type?: number }[] }[] };
+};
 type CacheEntry = { expiresAt: number; movie: Partial<Movie> | null };
 
 const CACHE_TTL = 6 * 60 * 60 * 1000;
@@ -19,6 +26,32 @@ const metadataCache = new Map<string, CacheEntry>();
 
 function image(path: string | null | undefined, size: "w500" | "w1280") {
   return path ? `https://image.tmdb.org/t/p/${size}${path}` : null;
+}
+
+function normalized(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function bestMatch(results: SearchMovie[], movie: Movie) {
+  const wantedTitle = normalized(movie.title);
+  return [...results].sort((a, b) => score(b) - score(a))[0];
+
+  function score(candidate: SearchMovie) {
+    const candidateTitle = normalized(candidate.title);
+    const candidateYear = candidate.release_date?.slice(0, 4);
+    let value = Math.min(candidate.popularity || 0, 100) / 100;
+    if (candidateTitle === wantedTitle) value += 8;
+    else if (candidateTitle.includes(wantedTitle) || wantedTitle.includes(candidateTitle)) value += 3;
+    if (movie.year && candidateYear === movie.year) value += 5;
+    return value;
+  }
+}
+
+function certification(details: DetailsMovie) {
+  const releases = details.release_dates?.results?.find((result) => result.iso_3166_1 === "US")?.release_dates || [];
+  return releases.find((release) => release.certification && release.type === 3)?.certification
+    || releases.find((release) => release.certification)?.certification
+    || null;
 }
 
 async function fetchMetadata(movie: Movie, token: string): Promise<Partial<Movie> | null> {
@@ -36,13 +69,13 @@ async function fetchMetadata(movie: Movie, token: string): Promise<Partial<Movie
   const searchResponse = await fetch(searchUrl, { headers, signal: AbortSignal.timeout(8000) });
   if (!searchResponse.ok) throw new Error(`TMDB search failed (${searchResponse.status}).`);
   const search = await searchResponse.json() as { results?: SearchMovie[] };
-  const match = search.results?.[0];
+  const match = bestMatch(search.results || [], movie);
   if (!match) {
     metadataCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL, movie: null });
     return null;
   }
 
-  const detailsResponse = await fetch(`https://api.themoviedb.org/3/movie/${match.id}?language=en-US`, { headers, signal: AbortSignal.timeout(8000) });
+  const detailsResponse = await fetch(`https://api.themoviedb.org/3/movie/${match.id}?language=en-US&append_to_response=release_dates`, { headers, signal: AbortSignal.timeout(8000) });
   const details: DetailsMovie = detailsResponse.ok ? await detailsResponse.json() as DetailsMovie : match;
   const metadata: Partial<Movie> = {
     tmdbId: match.id,
@@ -51,6 +84,9 @@ async function fetchMetadata(movie: Movie, token: string): Promise<Partial<Movie
     overview: details.overview || null,
     rating: typeof details.vote_average === "number" ? details.vote_average : null,
     runtimeMinutes: details.runtime || null,
+    tagline: details.tagline?.trim() || null,
+    certification: certification(details),
+    collection: details.belongs_to_collection?.name?.replace(/ Collection$/, "") || null,
     genres: details.genres?.map((genre) => genre.name) || movie.genres,
     posterUrl: movie.posterUrl || image(details.poster_path, "w500"),
     backdropUrl: image(details.backdrop_path, "w1280"),
