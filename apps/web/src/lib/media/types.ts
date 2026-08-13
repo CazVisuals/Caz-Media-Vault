@@ -12,6 +12,9 @@ export type Movie = {
   rating: number | null;
   runtimeMinutes: number | null;
   tmdbId: number | null;
+  tagline: string | null;
+  certification: string | null;
+  collection: string | null;
   posterUrl: string | null;
   backdropUrl: string | null;
 };
