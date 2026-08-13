@@ -25,8 +25,9 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: constants-hub-tunnel
     restart: unless-stopped
-    profiles: ["tunnel"]
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    env_file:
+      - .env
+    command: tunnel --no-autoupdate run
     depends_on:
       media-vault:
         condition: service_healthy
