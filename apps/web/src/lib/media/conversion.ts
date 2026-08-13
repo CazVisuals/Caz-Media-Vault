@@ -9,6 +9,9 @@ export type ConversionJob = { id: string; source: string; output: string; status
 const STORE_DIR = ".constants-hub";
 const STORE_FILE = "conversion-queue.json";
 let worker: Promise<void> | null = null;
+let autoScan: Promise<void> | null = null;
+let lastAutoScan = 0;
+const VIDEO = new Set([".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"]);
 
 async function paths() {
   const root = await fs.realpath(getMediaRoot());
@@ -72,8 +75,37 @@ export async function enqueueConversion(relativePath: string, start = true) {
   const { root } = await paths(); const source = await fs.realpath(path.resolve(root, relativePath)); const inside = path.relative(root, source);
   if (!inside || inside.startsWith("..") || path.isAbsolute(inside) || inside.split(path.sep).some((part) => part.startsWith("."))) throw new Error("Conversion source must remain inside the media library.");
   const probe = await probeMedia(source); if (probe.mobileCompatible) return null;
-  const jobs = await readJobs(); const existing = jobs.find((job) => job.source === inside && job.status !== "failed"); if (existing) return existing;
+  const jobs = await readJobs(); const existing = jobs.find((job) => job.source === inside); if (existing) return existing;
   const parsed = path.parse(inside); const output = path.join(parsed.dir, `${parsed.name}.mp4`); const now = new Date().toISOString();
   const job: ConversionJob = { id: createHash("sha256").update(`${inside}:${now}`).digest("hex").slice(0, 16), source: inside, output, status: "queued", error: null, createdAt: now, updatedAt: now };
   jobs.push(job); await writeJobs(jobs); if (start) startConversionWorker(); return job;
+}
+
+async function mediaFiles(directory: string, root: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await mediaFiles(absolute, root));
+    else if (entry.isFile() && VIDEO.has(path.extname(entry.name).toLowerCase())) files.push(path.relative(root, absolute));
+  }
+  return files;
+}
+
+export async function scanAndQueueConversions() {
+  const root = await fs.realpath(getMediaRoot());
+  const queued: ConversionJob[] = [];
+  for (const relative of await mediaFiles(root, root)) {
+    const job = await enqueueConversion(relative, false);
+    if (job?.status === "queued") queued.push(job);
+  }
+  startConversionWorker();
+  return queued;
+}
+
+export function scheduleAutomaticConversionScan() {
+  const now = Date.now();
+  if (autoScan || now - lastAutoScan < 60_000) return;
+  lastAutoScan = now;
+  autoScan = scanAndQueueConversions().then(() => undefined).catch(() => undefined).finally(() => { autoScan = null; });
 }
