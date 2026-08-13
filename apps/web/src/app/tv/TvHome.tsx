@@ -11,17 +11,39 @@ export default function TvHome() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   useTvNavigation();
 
   useEffect(() => {
-    fetch("/api/media/library", { cache: "no-store" })
-      .then(async (response) => {
+    let active = true;
+    async function loadLibrary(background = false) {
+      if (background) setRefreshing(true);
+      else setLoading(true);
+      try {
+        const response = await fetch(`/api/media/library?refresh=${Date.now()}`, { cache: "no-store" });
         const result = await response.json() as LibraryResponse | { success: false; error: string };
         if (!response.ok || !result.success) throw new Error("error" in result ? result.error : "Library unavailable.");
-        setMovies(result.movies);
-      })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Library unavailable."))
-      .finally(() => setLoading(false));
+        if (active) { setMovies(result.movies); setError(""); }
+      } catch (reason) {
+        if (active) setError(reason instanceof Error ? reason.message : "Library unavailable.");
+      } finally {
+        if (active) { setLoading(false); setRefreshing(false); }
+      }
+    }
+
+    const refreshVisible = () => {
+      if (document.visibilityState === "visible") void loadLibrary(true);
+    };
+    void loadLibrary();
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    const interval = window.setInterval(() => void loadLibrary(true), 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -37,7 +59,7 @@ export default function TvHome() {
     <main className="tv-shell">
       <header className="topbar">
         <Link href="/tv" className="brand focusable" data-focusable="true"><span>CONSTANT’S</span> HUB</Link>
-        <nav><Link href="/tv" className="focusable" data-focusable="true">Movies</Link><Link href="/settings" className="focusable" data-focusable="true">Admin</Link></nav>
+        <nav><button className="nav-button focusable" data-focusable="true" onClick={() => window.location.reload()}>{refreshing ? "Refreshing…" : "Refresh"}</button><Link href="/tv" className="focusable" data-focusable="true">Movies</Link><Link href="/settings" className="focusable" data-focusable="true">Admin</Link></nav>
       </header>
 
       {featured ? <section className="hero" style={featured.posterUrl ? { backgroundImage: `linear-gradient(90deg, #05070b 5%, rgba(5,7,11,.82) 45%, rgba(5,7,11,.15)), url(${featured.posterUrl})` } : undefined}>
