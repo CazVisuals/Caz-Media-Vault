@@ -93,6 +93,9 @@ export async function buildLibrary(): Promise<Movie[]> {
       rating: null,
       runtimeMinutes: null,
       tmdbId: null,
+      tagline: null,
+      certification: null,
+      collection: null,
       posterUrl: localArtwork ? `/api/media/artwork/${id}` : null,
       backdropUrl: null,
     } satisfies Movie;
