@@ -8,7 +8,12 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
-RUN mkdir -p public && npm run build
+# DSM may create @eaDir index folders after Docker has evaluated .dockerignore.
+# Remove those metadata directories only from this temporary build layer so
+# Next.js does not mistake them for App Router parallel-route slots.
+RUN find . -type d -name '@eaDir' -prune -exec rm -rf '{}' + \
+    && mkdir -p public \
+    && npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /app
