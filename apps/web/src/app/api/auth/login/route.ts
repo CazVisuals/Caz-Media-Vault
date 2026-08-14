@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   const configuredPassword = process.env.AUTH_PASSWORD ?? "";
   const secret = process.env.AUTH_SECRET ?? "";
 
-  if (process.env.PUBLIC_AUTH_ENABLED !== "true" || !configuredUsername || !configuredPassword || secret.length < 32) {
+  if (!configuredUsername || !configuredPassword || secret.length < 32) {
     return NextResponse.json({ error: "Public login is not configured." }, { status: 503 });
   }
 
