@@ -15,7 +15,7 @@ function isPrivateHostname(hostname: string) {
 }
 
 function isPublicAuthRoute(pathname: string) {
-  return pathname === "/login" || pathname === "/api/auth/login" || pathname === "/api/auth/logout";
+  return pathname === "/login" || pathname === "/api/auth/login" || pathname === "/api/auth/logout" || pathname === "/api/auth/status";
 }
 
 export async function proxy(request: NextRequest) {
@@ -24,7 +24,7 @@ export async function proxy(request: NextRequest) {
   );
   const directPrivateRequest = !cameThroughCloudflare && isPrivateHostname(requestHostname(request));
 
-  if (process.env.PUBLIC_AUTH_ENABLED !== "true" || directPrivateRequest) {
+  if (directPrivateRequest) {
     return NextResponse.next();
   }
 
@@ -32,7 +32,11 @@ export async function proxy(request: NextRequest) {
   if (isPublicAuthRoute(pathname)) return NextResponse.next();
 
   const username = process.env.AUTH_USERNAME ?? "";
+  const password = process.env.AUTH_PASSWORD ?? "";
   const secret = process.env.AUTH_SECRET ?? "";
+  if (!username || !password || secret.length < 32) {
+    return new NextResponse("Public authentication is not fully configured.", { status: 503 });
+  }
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
   if (username && secret.length >= 32 && await verifySessionToken(token, secret, username)) {
     return NextResponse.next();
