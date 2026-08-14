@@ -63,7 +63,6 @@ The DS223 has limited CPU resources, so full-length conversions can take many ho
 Constant’s Hub can require a signed login session only on its public hostname while leaving private LAN addresses passwordless. Add these values to the uncommitted Synology `.env` file before rebuilding:
 
 ```dotenv
-PUBLIC_AUTH_ENABLED=true
 AUTH_USERNAME=choose-a-username
 AUTH_PASSWORD=choose-a-long-unique-password
 AUTH_SECRET=generate-at-least-32-random-characters
@@ -71,6 +70,6 @@ AUTH_SECRET=generate-at-least-32-random-characters
 
 Generate a strong session secret with `openssl rand -hex 32`. The Compose file passes these values into the application container. Never commit the real values or share them in screenshots.
 
-When enabled, every request arriving through Cloudflare requires the login cookie, even if the tunnel presents a private origin host header. Only genuinely direct requests to loopback, `.local`, and RFC 1918 private addresses—including `http://192.168.0.15:3000`—remain available for trusted home TVs. The session lasts 30 days, uses an HTTP-only secure cookie, and login attempts are limited per source address.
+When all three credential values are configured, every request arriving through Cloudflare requires the login cookie, even if the tunnel presents a private origin host header. Public requests fail closed with status 503 when any credential is missing. Only genuinely direct requests to loopback, `.local`, and RFC 1918 private addresses—including `http://192.168.0.15:3000`—remain available for trusted home TVs. The session lasts 30 days, uses an HTTP-only secure cookie, and login attempts are limited per source address. `/api/auth/status` reports only whether each required setting is present, never its value.
 
 Deploy and test the native login before removing the Cloudflare Access application; otherwise the Cloudflare login screen will continue to appear in front of Constant’s Hub.
