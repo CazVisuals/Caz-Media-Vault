@@ -1,4 +1,5 @@
 import type { Movie } from "@/lib/media/types";
+import { isKidsMovie } from "@/lib/media/kids";
 
 type SearchMovie = {
   id: number;
@@ -91,6 +92,7 @@ async function fetchMetadata(movie: Movie, token: string): Promise<Partial<Movie
     posterUrl: movie.posterUrl || image(details.poster_path, "w500"),
     backdropUrl: image(details.backdrop_path, "w1280"),
   };
+  metadata.isKids = isKidsMovie(metadata.genres || movie.genres, metadata.certification);
   metadataCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL, movie: metadata });
   return metadata;
 }
