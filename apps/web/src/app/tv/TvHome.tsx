@@ -51,9 +51,11 @@ export default function TvHome() {
     if (!value) return movies;
     return movies.filter((movie) => [movie.title, movie.year || "", movie.genre || "", movie.overview || ""].some((field) => field.toLowerCase().includes(value)));
   }, [movies, query]);
-  const featured = filtered[0] || movies[0];
+  const movieItems = filtered.filter((movie) => movie.mediaType !== "tv");
+  const shows = filtered.filter((movie) => movie.mediaType === "tv");
+  const featured = movieItems[0] || filtered[0] || movies[0];
   const recent = [...filtered].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 12);
-  const genres = Array.from(new Set(filtered.flatMap((movie) => movie.genres))).sort();
+  const genres = Array.from(new Set(movieItems.flatMap((movie) => movie.genres))).sort();
   const kids = filtered.filter((movie) => movie.isKids);
 
   return (
@@ -73,9 +75,10 @@ export default function TvHome() {
         {error ? <div className="state-card error">{error}<small>Confirm MEDIA_ROOT points to your mounted NAS.</small></div> : null}
         {!loading && !error && movies.length === 0 ? <div className="state-card">No movie files found outside Inbox.</div> : null}
         {recent.length ? <MovieRow title={query ? "Search Results" : "Recently Added"} movies={query ? filtered : recent} /> : null}
+        {!query && shows.length ? <MovieRow title="TV Shows" movies={shows} /> : null}
         {!query && kids.length ? <MovieRow title="Kids & Family" movies={kids} /> : null}
-        {!query && genres.filter((genre) => !["kids", "kids & family"].includes(genre.toLowerCase())).map((genre) => <MovieRow key={genre} title={genre} movies={movies.filter((movie) => movie.genres.includes(genre))} />)}
-        {!query && movies.length ? <MovieRow title="All Movies" movies={movies} /> : null}
+        {!query && genres.filter((genre) => !["kids", "kids & family", "tv shows"].includes(genre.toLowerCase())).map((genre) => <MovieRow key={genre} title={genre} movies={movieItems.filter((movie) => movie.genres.includes(genre))} />)}
+        {!query && movieItems.length ? <MovieRow title="All Movies" movies={movieItems} /> : null}
       </section>
     </main>
   );

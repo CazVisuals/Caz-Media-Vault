@@ -64,6 +64,16 @@ TMDB Family titles are classified as Kids & Family unless their US certification
 
 The organizer writes both `poster.jpg` and `folder.jpg`. System Settings also includes **Sync Missing Posters** for existing movies. Synology Media Server owns the separate DLNA database used by Samsung's built-in media browser; because Docker moves and writes do not reliably trigger DSM indexing, use **Control Panel → Indexing Service → Media Indexing → Re-index** after organizing or syncing artwork.
 
+## TV show organization
+
+Inbox filenames containing `S01E01` or `1x01` are recognized as television episodes. The organizer uses TMDB television metadata and groups them as:
+
+```text
+/media/TV Shows/Series Name/Season 01/Series Name - S01E01.mp4
+```
+
+Episodes appear in the **TV Shows** row on the TV interface. Files without a recognized episode marker continue through the existing movie organizer.
+
 ## Public username and password
 
 Constant’s Hub can require a signed login session only on its public hostname while leaving private LAN addresses passwordless. Add these values to the uncommitted Synology `.env` file before rebuilding:

@@ -56,7 +56,8 @@ export async function POST(request: Request) {
     await ensureSafeDirectory(root, path.dirname(destinationInsideRoot));
     await fs.rename(source, destination);
     if (poster) await writePosterPair(path.dirname(destination), poster);
-    return Response.json({ success: true, message: poster ? "Movie organized with poster.jpg and folder.jpg artwork." : "Movie organized successfully.", relativePath: destinationInsideRoot });
+    const isEpisode = destinationInsideRoot.split(path.sep)[0].toLowerCase() === "tv shows";
+    return Response.json({ success: true, message: poster ? `${isEpisode ? "Episode" : "Movie"} organized with poster.jpg and folder.jpg artwork.` : `${isEpisode ? "Episode" : "Movie"} organized successfully.`, relativePath: destinationInsideRoot });
   } catch (error) {
     return Response.json({ success: false, error: error instanceof Error ? error.message : "Could not organize movie." }, { status: 500 });
   }

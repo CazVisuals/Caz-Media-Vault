@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Movie } from "./types";
 import { isKidsMovie } from "./kids";
+import { parseEpisodeName } from "./episodes";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"]);
 const ARTWORK_NAMES = ["poster.jpg", "poster.jpeg", "poster.png", "folder.jpg", "folder.jpeg", "folder.png"];
@@ -75,14 +76,16 @@ export async function buildLibrary(): Promise<Movie[]> {
     const relativePath = path.relative(root, filePath);
     const stat = await fs.stat(filePath);
     const parsed = parseName(path.basename(filePath));
+    const episode = parseEpisodeName(path.basename(filePath));
     const localArtwork = await findArtwork(filePath, parsed.stem);
     const topLevel = relativePath.split(path.sep)[0];
-    const genre = topLevel && topLevel !== path.basename(filePath) ? topLevel : null;
+    const isTvPath = topLevel?.toLowerCase() === "tv shows";
+    const genre = isTvPath ? "TV Shows" : topLevel && topLevel !== path.basename(filePath) ? topLevel : null;
     const id = movieId(relativePath);
 
     return {
       id,
-      title: parsed.title,
+      title: episode ? `${episode.seriesTitle} · ${String(episode.seasonNumber).padStart(2, "0")}x${String(episode.episodeNumber).padStart(2, "0")}` : parsed.title,
       year: parsed.year,
       fileName: path.basename(filePath),
       relativePath,
@@ -91,6 +94,10 @@ export async function buildLibrary(): Promise<Movie[]> {
       genre,
       genres: genre ? [genre] : [],
       isKids: isKidsMovie(genre ? [genre] : [], null),
+      mediaType: episode || isTvPath ? "tv" : "movie",
+      seriesTitle: episode?.seriesTitle || (isTvPath ? relativePath.split(path.sep)[1] || null : null),
+      seasonNumber: episode?.seasonNumber ?? null,
+      episodeNumber: episode?.episodeNumber ?? null,
       overview: null,
       rating: null,
       runtimeMinutes: null,

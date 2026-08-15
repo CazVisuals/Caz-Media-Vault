@@ -11,6 +11,8 @@ type SearchMovie = {
   backdrop_path?: string | null;
   genre_ids?: number[];
   popularity?: number;
+  name?: string;
+  first_air_date?: string;
 };
 
 type DetailsMovie = SearchMovie & {
@@ -38,8 +40,8 @@ function bestMatch(results: SearchMovie[], movie: Movie) {
   return [...results].sort((a, b) => score(b) - score(a))[0];
 
   function score(candidate: SearchMovie) {
-    const candidateTitle = normalized(candidate.title);
-    const candidateYear = candidate.release_date?.slice(0, 4);
+    const candidateTitle = normalized(candidate.title || candidate.name || "");
+    const candidateYear = (candidate.release_date || candidate.first_air_date)?.slice(0, 4);
     let value = Math.min(candidate.popularity || 0, 100) / 100;
     if (candidateTitle === wantedTitle) value += 8;
     else if (candidateTitle.includes(wantedTitle) || wantedTitle.includes(candidateTitle)) value += 3;
@@ -60,11 +62,13 @@ async function fetchMetadata(movie: Movie, token: string): Promise<Partial<Movie
   const cached = metadataCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.movie;
 
-  const searchUrl = new URL("https://api.themoviedb.org/3/search/movie");
-  searchUrl.searchParams.set("query", movie.title);
+  const type = movie.mediaType === "tv" ? "tv" : "movie";
+  const lookupTitle = movie.seriesTitle || movie.title;
+  const searchUrl = new URL(`https://api.themoviedb.org/3/search/${type}`);
+  searchUrl.searchParams.set("query", lookupTitle);
   searchUrl.searchParams.set("include_adult", "false");
   searchUrl.searchParams.set("language", "en-US");
-  if (movie.year) searchUrl.searchParams.set("year", movie.year);
+  if (movie.year) searchUrl.searchParams.set(type === "tv" ? "first_air_date_year" : "year", movie.year);
 
   const headers = { Authorization: `Bearer ${token}`, accept: "application/json" };
   const searchResponse = await fetch(searchUrl, { headers, signal: AbortSignal.timeout(8000) });
@@ -76,17 +80,18 @@ async function fetchMetadata(movie: Movie, token: string): Promise<Partial<Movie
     return null;
   }
 
-  const detailsResponse = await fetch(`https://api.themoviedb.org/3/movie/${match.id}?language=en-US&append_to_response=release_dates`, { headers, signal: AbortSignal.timeout(8000) });
+  const detailsResponse = await fetch(`https://api.themoviedb.org/3/${type}/${match.id}?language=en-US${type === "movie" ? "&append_to_response=release_dates" : ""}`, { headers, signal: AbortSignal.timeout(8000) });
   const details: DetailsMovie = detailsResponse.ok ? await detailsResponse.json() as DetailsMovie : match;
   const metadata: Partial<Movie> = {
     tmdbId: match.id,
-    title: details.title || movie.title,
-    year: details.release_date?.slice(0, 4) || movie.year,
+    title: type === "tv" ? movie.title : details.title || movie.title,
+    seriesTitle: type === "tv" ? details.name || lookupTitle : movie.seriesTitle,
+    year: (type === "tv" ? details.first_air_date : details.release_date)?.slice(0, 4) || movie.year,
     overview: details.overview || null,
     rating: typeof details.vote_average === "number" ? details.vote_average : null,
     runtimeMinutes: details.runtime || null,
     tagline: details.tagline?.trim() || null,
-    certification: certification(details),
+    certification: type === "movie" ? certification(details) : null,
     collection: details.belongs_to_collection?.name?.replace(/ Collection$/, "") || null,
     genres: details.genres?.map((genre) => genre.name) || movie.genres,
     posterUrl: movie.posterUrl || image(details.poster_path, "w500"),

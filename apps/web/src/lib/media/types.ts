@@ -9,6 +9,10 @@ export type Movie = {
   genre: string | null;
   genres: string[];
   isKids: boolean;
+  mediaType: "movie" | "tv";
+  seriesTitle: string | null;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
   overview: string | null;
   rating: number | null;
   runtimeMinutes: number | null;
