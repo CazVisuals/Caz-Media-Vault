@@ -13,12 +13,14 @@ export default function MediaToolsPage() {
   const [jobs, setJobs] = useState<ConversionJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [queueing, setQueueing] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const [error, setError] = useState("");
 
   async function refreshJobs() {
     const response = await fetch("/api/media/conversions", { cache: "no-store" });
-    const result = await response.json() as { jobs?: ConversionJob[] };
-    if (response.ok) setJobs(result.jobs || []);
+    const result = await response.json() as { jobs?: ConversionJob[]; paused?: boolean };
+    if (response.ok) { setJobs(result.jobs || []); setPaused(Boolean(result.paused)); }
   }
 
   useEffect(() => {
@@ -56,12 +58,34 @@ export default function MediaToolsPage() {
     finally { setQueueing(false); }
   }
 
+  async function togglePause() {
+    setPausing(true); setError("");
+    try {
+      const response = await fetch("/api/media/conversions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: paused ? "resume" : "pause" }) });
+      const result = await response.json() as { jobs?: ConversionJob[]; paused?: boolean; error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not change conversion state.");
+      setJobs(result.jobs || []); setPaused(Boolean(result.paused));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not change conversion state."); }
+    finally { setPausing(false); }
+  }
+
+  async function clearHistory(action: "clear-failed" | "clear-finished") {
+    setError("");
+    try {
+      const response = await fetch("/api/media/conversions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const result = await response.json() as { jobs?: ConversionJob[]; error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not clear conversion history.");
+      setJobs(result.jobs || []);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not clear conversion history."); }
+  }
+
   const incompatible = items.filter((item) => item.probe && !item.probe.mobileCompatible).length;
   return <main className="admin-shell">
-    <header className="admin-header"><div><Link href="/settings">← System Status</Link><p className="eyebrow">MEDIA HEALTH</p><h1>Compatibility & Conversion</h1></div><button className="primary-button" disabled={queueing || loading} onClick={() => void queueAll()}>{queueing ? "Scanning…" : `Convert incompatible (${incompatible})`}</button></header>
-    <p className="overview">FFprobe checks the real container and codecs. Conversion runs one movie at a time as H.264/AAC MP4. Originals are archived, never deleted.</p>
+    <header className="admin-header"><div><Link href="/settings">← System Status</Link><p className="eyebrow">MEDIA HEALTH</p><h1>Compatibility & Conversion</h1></div><div className="conversion-controls"><button className="secondary-button" disabled={pausing} onClick={() => void togglePause()}>{pausing ? "Updating…" : paused ? "▶ Resume conversions" : "Ⅱ Pause conversions"}</button><button className="primary-button" disabled={queueing || loading} onClick={() => void queueAll()}>{queueing ? "Scanning…" : `Convert incompatible (${incompatible})`}</button></div></header>
+    <p className="overview">FFprobe checks the real container and codecs. Conversion runs one movie at a time with a single encoding thread so playback stays responsive. Originals are archived, never deleted.</p>
+    {paused ? <div className="state-card conversion-paused"><strong>Conversions paused</strong><small>Streaming and library browsing remain available. Resume whenever the NAS is idle.</small></div> : null}
     {error ? <div className="state-card error">{error}</div> : null}{loading ? <div className="state-card">Inspecting your library…</div> : null}
-    {jobs.length ? <section className="admin-panel"><p className="eyebrow">CONVERSION QUEUE</p>{jobs.map((job) => <div className="queue-row" key={job.id}><strong>{job.source}</strong><span className={`queue-${job.status}`}>{job.status}</span>{job.error ? <small>{job.error}</small> : null}</div>)}</section> : null}
+    {jobs.length ? <section className="admin-panel"><div className="queue-heading"><div><p className="eyebrow">CONVERSION QUEUE</p><h2>{jobs.filter((job) => job.status === "completed").length} of {jobs.length} completed</h2></div><div className="queue-actions"><button className="secondary-button" onClick={() => void clearHistory("clear-failed")}>Clear failed</button><button className="secondary-button" onClick={() => void clearHistory("clear-finished")}>Clear finished</button></div></div><div className="queue-overall"><span style={{ width: `${jobs.length ? Math.round((jobs.filter((job) => job.status === "completed").length / jobs.length) * 100) : 0}%` }} /></div>{jobs.map((job) => <div className="queue-row" key={job.id}><strong>{job.source}</strong><span className={`queue-${job.status}`}>{job.status}{job.status === "converting" && typeof job.progress === "number" ? ` · ${job.progress}%` : ""}</span>{job.status === "converting" || job.status === "queued" ? <div className="job-progress"><span style={{ width: `${job.progress || 0}%` }} /></div> : null}{job.error ? <small>{job.error}</small> : null}</div>)}</section> : null}
     <section className="organizer-list">{items.map(({ movie, probe, error: inspectError }) => <article className="media-health-card" key={movie.id}><div><h2>{movie.title}</h2><p>{movie.fileName}</p></div>{probe ? <><div className="codec-list"><span>{probe.container}</span><span>Video: {probe.videoCodec || "unknown"}</span><span>Audio: {probe.audioCodec || "none"}</span>{probe.width ? <span>{probe.width}×{probe.height}</span> : null}</div><strong className={probe.mobileCompatible ? "status-good" : "status-neutral"}>{probe.mobileCompatible ? "Mobile ready" : "Conversion needed"}</strong></> : <span className="state-card error">{inspectError}</span>}</article>)}</section>
   </main>;
 }

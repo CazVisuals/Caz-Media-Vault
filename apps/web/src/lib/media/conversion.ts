@@ -1,14 +1,16 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { getMediaRoot } from "./catalog";
 import { probeMedia } from "./probe";
 
-export type ConversionJob = { id: string; source: string; output: string; status: "queued" | "converting" | "completed" | "failed"; error: string | null; createdAt: string; updatedAt: string };
+export type ConversionJob = { id: string; source: string; output: string; status: "queued" | "converting" | "completed" | "failed"; progress?: number; durationSeconds?: number | null; error: string | null; createdAt: string; updatedAt: string };
 const STORE_DIR = ".constants-hub";
 const STORE_FILE = "conversion-queue.json";
+const PAUSE_FILE = "conversion-paused";
 let worker: Promise<void> | null = null;
+let currentFfmpeg: ChildProcess | null = null;
 let autoScan: Promise<void> | null = null;
 let lastAutoScan = 0;
 const VIDEO = new Set([".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"]);
@@ -30,12 +32,52 @@ async function readJobs(): Promise<ConversionJob[]> {
 async function writeJobs(jobs: ConversionJob[]) { const { file } = await paths(); await fs.writeFile(`${file}.tmp`, JSON.stringify(jobs, null, 2)); await fs.rename(`${file}.tmp`, file); }
 async function update(id: string, patch: Partial<ConversionJob>) { const jobs = await readJobs(); const job = jobs.find((item) => item.id === id); if (job) Object.assign(job, patch, { updatedAt: new Date().toISOString() }); await writeJobs(jobs); }
 
-function runFfmpeg(args: string[]) {
+function runFfmpeg(args: string[], jobId: string, durationSeconds: number | null) {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    const output = args.at(-1);
+    if (!output) { reject(new Error("FFmpeg output is missing.")); return; }
+    const child = spawn("ffmpeg", [...args.slice(0, -1), "-progress", "pipe:1", "-nostats", output], { stdio: ["ignore", "pipe", "pipe"] });
+    currentFfmpeg = child;
+    let progressBuffer = "";
+    let lastProgressWrite = 0;
+    child.stdout?.on("data", (chunk) => {
+      progressBuffer += String(chunk);
+      const lines = progressBuffer.split(/\r?\n/);
+      progressBuffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("out_time_us=") || !durationSeconds) continue;
+        const seconds = Number(line.slice("out_time_us=".length)) / 1_000_000;
+        const progress = Math.max(0, Math.min(99, Math.round((seconds / durationSeconds) * 100)));
+        if (Date.now() - lastProgressWrite > 1500) { lastProgressWrite = Date.now(); void update(jobId, { progress, durationSeconds }); }
+      }
+    });
     let error = ""; child.stderr.on("data", (chunk) => { error = `${error}${chunk}`.slice(-8000); });
-    child.on("error", reject); child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(error.trim() || `FFmpeg exited with code ${code}.`)));
+    child.on("error", (reason) => { currentFfmpeg = null; reject(reason); });
+    child.on("exit", (code) => { currentFfmpeg = null; if (code === 0) resolve(); else reject(new Error(error.trim() || `FFmpeg exited with code ${code}.`)); });
   });
+}
+
+async function pausePath() { return path.join((await paths()).store, PAUSE_FILE); }
+export async function conversionsPaused() { try { await fs.access(await pausePath()); return true; } catch { return false; } }
+
+export async function pauseConversions() {
+  await fs.writeFile(await pausePath(), new Date().toISOString());
+  if (currentFfmpeg && !currentFfmpeg.killed) currentFfmpeg.kill("SIGSTOP");
+  return true;
+}
+
+export async function resumeConversions() {
+  await fs.rm(await pausePath(), { force: true });
+  if (currentFfmpeg && !currentFfmpeg.killed) currentFfmpeg.kill("SIGCONT");
+  startConversionWorker();
+  return false;
+}
+
+export async function clearConversions(mode: "failed" | "finished") {
+  const jobs = await readJobs();
+  const kept = jobs.filter((job) => mode === "failed" ? job.status !== "failed" : !["failed", "completed"].includes(job.status));
+  await writeJobs(kept);
+  return kept;
 }
 
 async function processJob(job: ConversionJob) {
@@ -51,7 +93,9 @@ async function processJob(job: ConversionJob) {
   await fs.mkdir(tempDir, { recursive: true }); await fs.mkdir(originals, { recursive: true });
   const temp = path.join(tempDir, `${job.id}.mp4`);
   await fs.rm(temp, { force: true });
-  await runFfmpeg(["-hide_banner", "-y", "-i", source, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", temp]);
+  const sourceProbe = await probeMedia(source);
+  await update(job.id, { progress: 0, durationSeconds: sourceProbe.durationSeconds });
+  await runFfmpeg(["-hide_banner", "-y", "-i", source, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads:v", "1", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", temp], job.id, sourceProbe.durationSeconds);
   const verified = await probeMedia(temp); if (!verified.mobileCompatible) throw new Error("Converted file failed mobile compatibility verification.");
   let archived = path.join(originals, path.basename(source));
   try { await fs.access(archived); archived = path.join(originals, `${job.id}-${path.basename(source)}`); } catch { /* available */ }
@@ -61,13 +105,14 @@ async function processJob(job: ConversionJob) {
 
 async function work() {
   for (;;) {
+    if (await conversionsPaused()) return;
     const jobs = await readJobs(); const job = jobs.find((item) => item.status === "queued" || item.status === "converting"); if (!job) return;
     await update(job.id, { status: "converting", error: null });
-    try { await processJob(job); await update(job.id, { status: "completed" }); } catch (error) { await update(job.id, { status: "failed", error: error instanceof Error ? error.message : "Conversion failed." }); }
+    try { await processJob(job); await update(job.id, { status: "completed", progress: 100 }); } catch (error) { await update(job.id, { status: "failed", error: error instanceof Error ? error.message : "Conversion failed." }); }
   }
 }
 
-export async function listConversions() { const jobs = await readJobs(); if (!worker && jobs.some((job) => job.status === "queued" || job.status === "converting")) { worker = work().finally(() => { worker = null; }); } return jobs; }
+export async function listConversions() { const jobs = await readJobs(); if (!worker && !(await conversionsPaused()) && jobs.some((job) => job.status === "queued" || job.status === "converting")) { worker = work().finally(() => { worker = null; }); } return jobs; }
 
 export function startConversionWorker() { if (!worker) worker = work().finally(() => { worker = null; }); }
 
@@ -77,8 +122,8 @@ export async function enqueueConversion(relativePath: string, start = true) {
   const probe = await probeMedia(source); if (probe.mobileCompatible) return null;
   const jobs = await readJobs(); const existing = jobs.find((job) => job.source === inside); if (existing) return existing;
   const parsed = path.parse(inside); const output = path.join(parsed.dir, `${parsed.name}.mp4`); const now = new Date().toISOString();
-  const job: ConversionJob = { id: createHash("sha256").update(`${inside}:${now}`).digest("hex").slice(0, 16), source: inside, output, status: "queued", error: null, createdAt: now, updatedAt: now };
-  jobs.push(job); await writeJobs(jobs); if (start) startConversionWorker(); return job;
+  const job: ConversionJob = { id: createHash("sha256").update(`${inside}:${now}`).digest("hex").slice(0, 16), source: inside, output, status: "queued", progress: 0, durationSeconds: probe.durationSeconds, error: null, createdAt: now, updatedAt: now };
+  jobs.push(job); await writeJobs(jobs); if (start && !(await conversionsPaused())) startConversionWorker(); return job;
 }
 
 async function mediaFiles(directory: string, root: string): Promise<string[]> {
@@ -99,7 +144,7 @@ export async function scanAndQueueConversions() {
     const job = await enqueueConversion(relative, false);
     if (job?.status === "queued") queued.push(job);
   }
-  startConversionWorker();
+  if (!(await conversionsPaused())) startConversionWorker();
   return queued;
 }
 
