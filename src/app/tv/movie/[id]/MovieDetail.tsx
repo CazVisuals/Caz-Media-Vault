@@ -1,0 +1,52 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { useTvNavigation } from "@/components/media/useTvNavigation";
+import type { Movie } from "@/lib/media/types";
+
+export default function MovieDetail({ id }: { id: string }) {
+  const [movie, setMovie] = useState<Movie | null>(null);
+  const [error, setError] = useState("");
+  const [resume, setResume] = useState(0);
+  const [watchlisted, setWatchlisted] = useState(false);
+  useTvNavigation();
+
+  useEffect(() => {
+    const resumeTimer = window.setTimeout(() => {
+      const current = localStorage.getItem(`constants-hub-progress:${id}`);
+      const legacy = localStorage.getItem(`cmv-progress:${id}`);
+      setResume(Number(current || legacy) || 0);
+    }, 0);
+    void fetch("/api/user/state", { cache: "no-store" }).then((response) => response.json()).then((state: { progress?: { mediaId: string; seconds: number }[]; watchlist?: string[] }) => { const remote = state.progress?.find((item) => item.mediaId === id)?.seconds ?? 0; setResume((current) => Math.max(current, remote)); setWatchlisted(state.watchlist?.includes(id) ?? false); }).catch(() => undefined);
+    fetch(`/api/media/library/${id}`, { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json() as { success: boolean; movie?: Movie; error?: string };
+        if (!response.ok || !result.movie) throw new Error(result.error || "Movie not found.");
+        setMovie(result.movie);
+      })
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Movie not found."));
+    return () => window.clearTimeout(resumeTimer);
+  }, [id]);
+
+  if (error) return <main className="detail-shell"><div className="state-card error">{error}</div><Link href="/tv" className="secondary-button focusable" data-focusable="true">Back to movies</Link></main>;
+  if (!movie) return <main className="detail-shell"><div className="state-card">Loading movie…</div></main>;
+
+  const background = movie.backdropUrl || movie.posterUrl;
+  return <main className="detail-shell" style={background ? { backgroundImage: `linear-gradient(90deg, #05070b 10%, rgba(5,7,11,.88) 52%, rgba(5,7,11,.45)), url(${background})` } : undefined}>
+    <Link href="/tv" className="back-link focusable" data-focusable="true">← Browse</Link>
+    <section className="detail-content">
+      <p className="eyebrow">CONSTANT’S HUB</p><h1>{movie.title}</h1>
+      {movie.tagline ? <p className="tagline">{movie.tagline}</p> : null}
+      <div className="metadata"><span>{movie.year || "Year unknown"}</span>{movie.certification ? <span>{movie.certification}</span> : null}{movie.runtimeMinutes ? <span>{movie.runtimeMinutes} min</span> : null}{movie.genres.map((genre) => <span key={genre}>{genre}</span>)}{movie.rating !== null ? <span>★ {movie.rating.toFixed(1)}</span> : null}</div>
+      {movie.collection ? <p className="collection-label">Part of the {movie.collection} collection</p> : null}
+      <p className="overview">{movie.overview || "Ready to play from your private Synology library."}</p>
+      <div className="hero-actions">
+        <Link href={`/tv/watch/${movie.id}`} className="primary-button focusable" data-focusable="true">▶ {resume > 30 ? "Resume" : "Play"}</Link>
+        <button className="secondary-button focusable" data-focusable="true" onClick={() => { const included = !watchlisted; setWatchlisted(included); void fetch("/api/user/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "watchlist", mediaId: id, included }) }); }}>{watchlisted ? "✓ In My List" : "+ My List"}</button>
+        {resume > 30 ? <button className="secondary-button focusable" data-focusable="true" onClick={() => { localStorage.removeItem(`constants-hub-progress:${id}`); localStorage.removeItem(`cmv-progress:${id}`); setResume(0); void fetch("/api/user/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "clear-progress", mediaId: id }) }); }}>Start over</button> : null}
+      </div>
+      <small className="file-label">{movie.fileName}</small>
+    </section>
+  </main>;
+}

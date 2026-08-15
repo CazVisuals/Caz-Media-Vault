@@ -15,8 +15,10 @@ export default function TvHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [owner, setOwner] = useState(false);
+  const [profileState, setProfileState] = useState<{ progress: { mediaId: string; seconds: number; updatedAt: string; completed: boolean }[]; watchlist: string[] }>({ progress: [], watchlist: [] });
   useTvNavigation();
   useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { profile?: { role?: string } | null }) => setOwner(result.profile?.role === "owner")).catch(() => setOwner(false)); }, []);
+  useEffect(() => { void fetch("/api/user/state", { cache: "no-store" }).then((response) => response.json()).then((result) => setProfileState({ progress: result.progress || [], watchlist: result.watchlist || [] })).catch(() => undefined); }, []);
 
   useEffect(() => {
     let active = true;
@@ -69,6 +71,8 @@ export default function TvHome() {
   const recent = [...filtered].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 12);
   const genres = Array.from(new Set(movieItems.flatMap((movie) => movie.genres))).sort();
   const kids = filtered.filter((movie) => movie.isKids);
+  const continueWatching = profileState.progress.filter((item) => item.seconds > 30 && !item.completed).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((item) => movies.find((movie) => movie.id === item.mediaId)).filter((movie): movie is Movie => Boolean(movie));
+  const myList = profileState.watchlist.map((id) => movies.find((movie) => movie.id === id)).filter((movie): movie is Movie => Boolean(movie));
 
   return (
     <main className="tv-shell">
@@ -87,6 +91,8 @@ export default function TvHome() {
         {loading ? <div className="state-card">Scanning your media vault…</div> : null}
         {error ? <div className="state-card error">{error}<small>Confirm MEDIA_ROOT points to your mounted NAS.</small></div> : null}
         {!loading && !error && movies.length === 0 ? <div className="state-card">No movie files found outside Inbox.</div> : null}
+        {!query && continueWatching.length ? <MovieRow title="Continue Watching" movies={continueWatching.slice(0, 12)} /> : null}
+        {!query && myList.length ? <MovieRow title="My List" movies={myList.slice(0, 12)} /> : null}
         {recent.length ? <MovieRow id="recent" title={query ? "Search Results" : "Recently Added"} movies={(query ? filtered : recent).slice(0, 12)} view="recent" /> : null}
         {!query && showGroups.length ? <ShowRow id="shows" shows={showGroups} /> : null}
         {!query && kids.length ? <MovieRow id="kids" title="Kids & Family" movies={kids.slice(0, 12)} view="kids" /> : null}

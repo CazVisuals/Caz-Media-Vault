@@ -25,9 +25,15 @@ type StoredProfile = PublicProfile & {
   pinSalt: string | null;
 };
 
-type AppData = { version: 1; profiles: StoredProfile[] };
+export type ProgressRecord = { mediaId: string; seconds: number; duration: number; updatedAt: string; completed: boolean };
+type AppData = {
+  version: 1;
+  profiles: StoredProfile[];
+  progress: Record<string, Record<string, ProgressRecord>>;
+  watchlists: Record<string, string[]>;
+};
 
-const EMPTY_DATA: AppData = { version: 1, profiles: [] };
+const EMPTY_DATA: AppData = { version: 1, profiles: [], progress: {}, watchlists: {} };
 let writes = Promise.resolve();
 
 function dataPath() {
@@ -37,7 +43,12 @@ function dataPath() {
 async function readData(): Promise<AppData> {
   try {
     const parsed = JSON.parse(await fs.readFile(dataPath(), "utf8")) as Partial<AppData>;
-    return { version: 1, profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [] };
+    return {
+      version: 1,
+      profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
+      progress: parsed.progress && typeof parsed.progress === "object" ? parsed.progress : {},
+      watchlists: parsed.watchlists && typeof parsed.watchlists === "object" ? parsed.watchlists : {},
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return structuredClone(EMPTY_DATA);
     throw error;
@@ -142,6 +153,38 @@ export async function deleteProfile(id: string) {
     const before = data.profiles.length;
     data.profiles = data.profiles.filter((item) => item.id !== id);
     if (data.profiles.length === before) throw new Error("Profile not found.");
+    delete data.progress[id];
+    delete data.watchlists[id];
     return true;
+  });
+}
+
+export async function getProfileState(profileId: string) {
+  const data = await readData();
+  return { progress: Object.values(data.progress[profileId] ?? {}), watchlist: data.watchlists[profileId] ?? [] };
+}
+
+export async function saveProgress(profileId: string, mediaId: string, seconds: number, duration: number) {
+  if (!/^[a-f0-9]{24}$/u.test(mediaId) || !Number.isFinite(seconds) || !Number.isFinite(duration)) throw new Error("Invalid playback progress.");
+  return mutate((data) => {
+    data.progress[profileId] ??= {};
+    const completed = duration > 0 && (seconds >= duration - 45 || seconds / duration >= 0.92);
+    const record = { mediaId, seconds: completed ? 0 : Math.max(0, seconds), duration: Math.max(0, duration), updatedAt: new Date().toISOString(), completed };
+    data.progress[profileId][mediaId] = record;
+    return record;
+  });
+}
+
+export async function clearProgress(profileId: string, mediaId: string) {
+  return mutate((data) => { if (data.progress[profileId]) delete data.progress[profileId][mediaId]; return true; });
+}
+
+export async function setWatchlist(profileId: string, mediaId: string, included: boolean) {
+  if (!/^[a-f0-9]{24}$/u.test(mediaId)) throw new Error("Invalid media ID.");
+  return mutate((data) => {
+    const current = new Set(data.watchlists[profileId] ?? []);
+    if (included) current.add(mediaId); else current.delete(mediaId);
+    data.watchlists[profileId] = Array.from(current).slice(0, 500);
+    return data.watchlists[profileId];
   });
 }
