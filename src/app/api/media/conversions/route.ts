@@ -4,7 +4,10 @@ import { requireOwner } from "@/lib/auth/request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export async function GET() { return Response.json({ success: true, paused: await conversionsPaused(), jobs: await listConversions() }, { headers: { "Cache-Control": "no-store" } }); }
+export async function GET(request: NextRequest) {
+  if (!await requireOwner(request)) return Response.json({ success: false, error: "Owner access required." }, { status: 403 });
+  return Response.json({ success: true, paused: await conversionsPaused(), jobs: await listConversions() }, { headers: { "Cache-Control": "no-store" } });
+}
 
 export async function POST(request: NextRequest) {
   if (!await requireOwner(request)) return Response.json({ success: false, error: "Owner access required." }, { status: 403 });

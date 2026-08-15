@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as Record<string, unknown>;
     const role = body.role;
     if (!(["family", "kids", "guest"] as unknown[]).includes(role)) throw new Error("Choose Family, Kids, or Guest.");
+    if (String(body.username ?? "").trim().toLowerCase() === (process.env.AUTH_USERNAME ?? "").trim().toLowerCase()) throw new Error("That username is reserved for the Owner account.");
     const profile = await createProfile({
       username: String(body.username ?? ""), displayName: String(body.displayName ?? ""), password: String(body.password ?? ""),
       role: role as ProfileRole, pin: typeof body.pin === "string" ? body.pin : undefined,

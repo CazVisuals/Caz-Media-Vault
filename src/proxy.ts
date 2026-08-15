@@ -18,10 +18,9 @@ function isPublicAuthRoute(pathname: string) {
   return pathname === "/login" || pathname === "/api/auth/login" || pathname === "/api/auth/logout" || pathname === "/api/auth/status";
 }
 
-function isOwnerRoute(pathname: string, method: string) {
+function isOwnerRoute(pathname: string) {
   if (pathname === "/settings" || pathname.startsWith("/settings/") || pathname === "/organize") return true;
-  if (pathname.startsWith("/api/admin/") || pathname === "/api/media/move") return true;
-  if (method !== "GET" && ["/api/media/artwork/sync", "/api/media/conversions"].includes(pathname)) return true;
+  if (pathname.startsWith("/api/admin/") || ["/api/media/move", "/api/media/artwork/sync", "/api/media/conversions", "/api/media/inspect", "/api/media/scan"].includes(pathname)) return true;
   return false;
 }
 
@@ -33,7 +32,7 @@ export async function proxy(request: NextRequest) {
 
   const { pathname, search } = request.nextUrl;
   if (isPublicAuthRoute(pathname)) return NextResponse.next();
-  if (directPrivateRequest && !isOwnerRoute(pathname, request.method)) return NextResponse.next();
+  if (directPrivateRequest && !isOwnerRoute(pathname)) return NextResponse.next();
 
   const username = process.env.AUTH_USERNAME ?? "";
   const password = process.env.AUTH_PASSWORD ?? "";
@@ -43,7 +42,7 @@ export async function proxy(request: NextRequest) {
   }
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
   const session = await verifySessionToken(token, secret);
-  if (isOwnerRoute(pathname, request.method)) {
+  if (isOwnerRoute(pathname)) {
     if (session?.role === "owner") return NextResponse.next();
     if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Owner access required." }, { status: 403 });
     const loginUrl = new URL("/login", request.url); loginUrl.searchParams.set("next", pathname); return NextResponse.redirect(loginUrl);
