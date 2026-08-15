@@ -8,6 +8,7 @@ export type Movie = {
   size: number;
   genre: string | null;
   genres: string[];
+  isKids: boolean;
   overview: string | null;
   rating: number | null;
   runtimeMinutes: number | null;
