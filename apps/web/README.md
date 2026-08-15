@@ -56,7 +56,13 @@ Open `/settings/media` to inspect the real container, video codec, audio codec, 
 
 The container health cycle also scans for newly added incompatible media once per minute and queues it automatically. The Media Compatibility page remains available for queue monitoring and manual scans.
 
-The DS223 has limited CPU resources, so full-length conversions can take many hours. Keep the NAS powered on and monitor the persistent queue on the Media Compatibility page. Protect the public application with Cloudflare Access before exposing administrative mutation routes.
+The DS223 has limited CPU resources, so full-length conversions can take many hours. Keep the NAS powered on and monitor the persistent queue on the Media Compatibility page. Configure the native public login before exposing administrative mutation routes.
+
+## Kids & Family and Synology artwork
+
+TMDB Family titles are classified as Kids & Family unless their US certification is PG-13/R/NC-17/TV-14/TV-MA. G titles qualify automatically, and Animation qualifies with a child-friendly certification. The TV home screen always places matching titles in a dedicated Kids & Family row. Newly organized matching movies are physically placed under `/media/Kids` after the normal confirmation step.
+
+The organizer writes both `poster.jpg` and `folder.jpg`. System Settings also includes **Sync Missing Posters** for existing movies. Synology Media Server owns the separate DLNA database used by Samsung's built-in media browser; because Docker moves and writes do not reliably trigger DSM indexing, use **Control Panel → Indexing Service → Media Indexing → Re-index** after organizing or syncing artwork.
 
 ## Public username and password
 
