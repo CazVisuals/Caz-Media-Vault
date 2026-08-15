@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { MediaCard } from "@/components/media/MediaCard";
 import { ShowCard } from "@/components/media/ShowCard";
 import { TvSidebar } from "@/components/media/TvSidebar";
+import { FeaturedHero } from "@/components/media/FeaturedHero";
 import { useTvNavigation } from "@/components/media/useTvNavigation";
 import type { LibraryResponse, Movie } from "@/lib/media/types";
 
@@ -67,7 +68,6 @@ export default function TvHome() {
     }
     return Array.from(groups.values()).map((episodes) => ({ show: episodes[0], episodeCount: episodes.length }));
   }, [shows]);
-  const featured = movieItems[0] || filtered[0] || movies[0];
   const recent = [...filtered].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 12);
   const genres = Array.from(new Set(movieItems.flatMap((movie) => movie.genres))).sort();
   const kids = filtered.filter((movie) => movie.isKids);
@@ -79,12 +79,10 @@ export default function TvHome() {
       <TvSidebar />
       <header className="topbar">
         <Link href="/tv" className="brand focusable" data-focusable="true"><span>CONSTANT’S</span> HUB</Link>
-        <nav><button className="nav-button focusable" data-focusable="true" onClick={() => window.location.reload()}>{refreshing ? "Refreshing…" : "Refresh"}</button><Link href="/tv" className="focusable" data-focusable="true">Movies</Link>{owner ? <Link href="/settings" className="focusable" data-focusable="true">Admin</Link> : null}</nav>
+        <nav><button className={`nav-button nav-refresh focusable${refreshing ? " spinning" : ""}`} data-focusable="true" aria-label="Refresh library" title="Refresh library" onClick={() => window.location.reload()}>↻</button><Link href="/tv/browse?view=movies" className="focusable" data-focusable="true">Movies</Link>{owner ? <Link href="/settings" className="focusable" data-focusable="true">Admin</Link> : null}</nav>
       </header>
 
-      {featured ? <section className="hero" style={featured.posterUrl ? { backgroundImage: `linear-gradient(90deg, #05070b 5%, rgba(5,7,11,.82) 45%, rgba(5,7,11,.15)), url(${featured.posterUrl})` } : undefined}>
-        <div className="hero-content"><p className="eyebrow">HOME CINEMA</p><h1>{featured.title}</h1><p>{featured.year || "From your private collection"}{featured.genre ? ` · ${featured.genre}` : ""}</p><div className="hero-actions"><Link href={`/tv/movie/${featured.id}`} className="primary-button focusable" data-focusable="true">▶ View movie</Link></div></div>
-      </section> : <section className="hero empty-hero"><div className="hero-content"><p className="eyebrow">HOME CINEMA</p><h1>What do you want to watch?</h1><p>Your private Synology library will appear here.</p></div></section>}
+      <FeaturedHero movies={movies} />
 
       <section className="content-area">
         <label className="search-wrap"><span>Search library</span><input data-focusable="true" className="focusable" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, year, or genre…" /></label>
