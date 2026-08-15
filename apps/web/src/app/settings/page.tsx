@@ -11,6 +11,8 @@ export default function SettingsPage() {
   const [lastScan, setLastScan] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [syncingPosters, setSyncingPosters] = useState(false);
+  const [posterMessage, setPosterMessage] = useState("");
 
   async function refresh() {
     setRefreshing(true);
@@ -38,6 +40,17 @@ export default function SettingsPage() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  async function syncPosters() {
+    setSyncingPosters(true); setPosterMessage(""); setError("");
+    try {
+      const response = await fetch("/api/media/artwork/sync", { method: "POST" });
+      const result = await response.json() as { success: boolean; message?: string; error?: string };
+      if (!response.ok || !result.success) throw new Error(result.error || "Poster sync failed.");
+      setPosterMessage(result.message || "Poster sync completed.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Poster sync failed."); }
+    finally { setSyncingPosters(false); }
+  }
+
   return <main className="admin-shell">
     <header className="admin-header"><div><Link href="/tv">← TV Mode</Link><p className="eyebrow">CONSTANT’S HUB</p><h1>System Status</h1></div><button className="primary-button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? "Checking…" : "Refresh"}</button></header>
     {error ? <div className="state-card error">{error}</div> : null}
@@ -48,6 +61,7 @@ export default function SettingsPage() {
       <StatusCard label="Playback" title="Secure Streaming" state="Ready" good><p>ID-based streaming supports byte ranges, seeking, and Resume playback.</p></StatusCard>
     </section>
     <section className="admin-panel"><p className="eyebrow">MEDIA TOOLS</p><h2>Compatibility & Organizer</h2><p>Inspect real codecs, convert incompatible movies for mobile playback, and safely organize Inbox files.</p><div className="hero-actions"><Link className="secondary-button" href="/settings/media">Media Compatibility</Link><Link className="secondary-button" href="/organize">Open Organizer</Link></div></section>
+    <section className="admin-panel"><p className="eyebrow">SAMSUNG TV ARTWORK</p><h2>Sync Missing Posters</h2><p>Downloads missing TMDB artwork as both poster.jpg and folder.jpg beside each movie. Synology Media Server still needs to re-index before its DLNA thumbnails update.</p><button className="secondary-button" disabled={syncingPosters} onClick={() => void syncPosters()}>{syncingPosters ? "Syncing…" : "Sync Missing Posters"}</button>{posterMessage ? <p className="artwork-ready">{posterMessage}</p> : null}</section>
   </main>;
 }
 
