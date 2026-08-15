@@ -54,6 +54,7 @@ export default function TvHome() {
   const featured = filtered[0] || movies[0];
   const recent = [...filtered].sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 12);
   const genres = Array.from(new Set(filtered.flatMap((movie) => movie.genres))).sort();
+  const kids = filtered.filter((movie) => movie.isKids);
 
   return (
     <main className="tv-shell">
@@ -72,7 +73,8 @@ export default function TvHome() {
         {error ? <div className="state-card error">{error}<small>Confirm MEDIA_ROOT points to your mounted NAS.</small></div> : null}
         {!loading && !error && movies.length === 0 ? <div className="state-card">No movie files found outside Inbox.</div> : null}
         {recent.length ? <MovieRow title={query ? "Search Results" : "Recently Added"} movies={query ? filtered : recent} /> : null}
-        {!query && genres.map((genre) => <MovieRow key={genre} title={genre} movies={movies.filter((movie) => movie.genres.includes(genre))} />)}
+        {!query && kids.length ? <MovieRow title="Kids & Family" movies={kids} /> : null}
+        {!query && genres.filter((genre) => !["kids", "kids & family"].includes(genre.toLowerCase())).map((genre) => <MovieRow key={genre} title={genre} movies={movies.filter((movie) => movie.genres.includes(genre))} />)}
         {!query && movies.length ? <MovieRow title="All Movies" movies={movies} /> : null}
       </section>
     </main>
