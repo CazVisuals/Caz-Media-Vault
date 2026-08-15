@@ -74,6 +74,8 @@ Inbox filenames containing `S01E01` or `1x01` are recognized as television episo
 
 Episodes appear in the **TV Shows** row on the TV interface. Files without a recognized episode marker continue through the existing movie organizer.
 
+The home screen intentionally limits each rail to a short preview so large libraries remain easy to navigate. The responsive sidebar opens dedicated searchable Movies, TV Shows, Kids & Family, and Recently Added grids. Each television series appears once; selecting it opens its seasons and episodes together.
+
 ## Public username and password
 
 Constant’s Hub can require a signed login session only on its public hostname while leaving private LAN addresses passwordless. Add these values to the uncommitted Synology `.env` file before rebuilding:
