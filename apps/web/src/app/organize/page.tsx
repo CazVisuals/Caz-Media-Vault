@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type Item = { name: string; type: "file" | "folder"; relativePath: string };
-type Preview = { source: string; fileName: string; title: string; year: string | null; destination: string; genre: string; posterUrl: string | null; ready: boolean };
+type Preview = { source: string; fileName: string; title: string; year: string | null; destination: string; genre: string; posterUrl: string | null; isKids: boolean; ready: boolean };
 const VIDEO = [".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"];
 
 function parse(fileName: string) {
@@ -32,7 +32,7 @@ export default function OrganizePage() {
       const inbox = (result.items || []).filter((item) => item.type === "file" && item.relativePath.toLowerCase().startsWith("inbox/") && VIDEO.some((extension) => item.name.toLowerCase().endsWith(extension)));
       const previews = inbox.map((item) => {
         const parsed = parse(item.name);
-        return { source: item.relativePath, fileName: item.name, title: parsed.title, year: parsed.year, destination: "", genre: "Checking…", posterUrl: null, ready: false };
+        return { source: item.relativePath, fileName: item.name, title: parsed.title, year: parsed.year, destination: "", genre: "Checking…", posterUrl: null, isKids: false, ready: false };
       });
       setMovies(previews);
       await Promise.all(previews.map(async (movie) => {
@@ -40,17 +40,18 @@ export default function OrganizePage() {
         let title = movie.title;
         let year = movie.year;
         let posterUrl: string | null = null;
+        let isKids = false;
         try {
           const params = new URLSearchParams({ title });
           if (year) params.set("year", year);
           const response = await fetch(`/api/media/metadata?${params}`);
-          const result = await response.json() as { movie?: { title: string; year: string | null; genres: string[]; posterUrl: string | null } | null };
-          if (response.ok && result.movie) { title = result.movie.title; year = result.movie.year || year; genre = result.movie.genres[0] || genre; posterUrl = result.movie.posterUrl; }
+          const result = await response.json() as { movie?: { title: string; year: string | null; genres: string[]; posterUrl: string | null; isKids: boolean } | null };
+          if (response.ok && result.movie) { title = result.movie.title; year = result.movie.year || year; isKids = result.movie.isKids; genre = isKids ? "Kids" : result.movie.genres[0] || genre; posterUrl = result.movie.posterUrl; }
         } catch { /* Other is the safe metadata fallback. */ }
         const parsed = parse(movie.fileName);
         const folder = safeName(year ? `${title} (${year})` : title);
         const destination = `${safeName(genre)}/${folder}/${folder}${parsed.extension}`;
-        setMovies((current) => current.map((item) => item.source === movie.source ? { ...item, title, year, genre, posterUrl, destination, ready: true } : item));
+        setMovies((current) => current.map((item) => item.source === movie.source ? { ...item, title, year, genre, posterUrl, isKids, destination, ready: true } : item));
       }));
     }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Inbox scan failed.")).finally(() => setLoading(false));
   }, []);
@@ -73,6 +74,6 @@ export default function OrganizePage() {
     <p className="overview">Only new video files inside Inbox are shown. Every destination is previewed and requires confirmation.</p>
     {message ? <div className="state-card">{message}</div> : null}{error ? <div className="state-card error">{error}</div> : null}{loading ? <div className="state-card">Scanning Inbox…</div> : null}
     {!loading && !error && movies.length === 0 ? <div className="state-card">Inbox has no video files waiting to be organized.</div> : null}
-    <section className="organizer-list">{movies.map((movie) => <article className="organizer-card" key={movie.source}>{movie.posterUrl ? <img /* eslint-disable-line @next/next/no-img-element -- remote preview is saved locally during organization */ className="organizer-poster" src={movie.posterUrl} alt={`${movie.title} poster`} /> : <div className="organizer-poster poster-fallback"><span>CH</span></div>}<div><small>INBOX FILE</small><h2>{movie.title}</h2><p>{movie.fileName}</p>{movie.posterUrl ? <small className="artwork-ready">POSTER READY</small> : null}</div><div className="destination"><small>DESTINATION</small><p>{movie.ready ? movie.destination : "Checking metadata…"}</p></div><div className="organizer-actions">{confirming === movie.source ? <><button className="primary-button" disabled={moving === movie.source} onClick={() => void move(movie)}>{moving === movie.source ? "Moving…" : "Confirm move"}</button><button className="secondary-button" disabled={moving === movie.source} onClick={() => setConfirming(null)}>Cancel</button></> : <button className="primary-button" disabled={!movie.ready || moving !== null} onClick={() => { setError(""); setMessage(""); setConfirming(movie.source); }}>Organize</button>}</div></article>)}</section>
+    <section className="organizer-list">{movies.map((movie) => <article className="organizer-card" key={movie.source}>{movie.posterUrl ? <img /* eslint-disable-line @next/next/no-img-element -- remote preview is saved locally during organization */ className="organizer-poster" src={movie.posterUrl} alt={`${movie.title} poster`} /> : <div className="organizer-poster poster-fallback"><span>CH</span></div>}<div><small>INBOX FILE</small><h2>{movie.title}</h2><p>{movie.fileName}</p>{movie.isKids ? <small className="kids-ready">KIDS &amp; FAMILY</small> : null}{movie.posterUrl ? <small className="artwork-ready">POSTER READY</small> : null}</div><div className="destination"><small>DESTINATION</small><p>{movie.ready ? movie.destination : "Checking metadata…"}</p></div><div className="organizer-actions">{confirming === movie.source ? <><button className="primary-button" disabled={moving === movie.source} onClick={() => void move(movie)}>{moving === movie.source ? "Moving…" : "Confirm move"}</button><button className="secondary-button" disabled={moving === movie.source} onClick={() => setConfirming(null)}>Cancel</button></> : <button className="primary-button" disabled={!movie.ready || moving !== null} onClick={() => { setError(""); setMessage(""); setConfirming(movie.source); }}>Organize</button>}</div></article>)}</section>
   </main>;
 }
