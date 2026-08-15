@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getMediaRoot } from "@/lib/media/catalog";
+import { downloadTmdbPoster, writePosterPair } from "@/lib/media/posters";
 
 export const runtime = "nodejs";
-const MAX_POSTER_BYTES = 10 * 1024 * 1024;
 
 function safeRelative(value: unknown) {
   if (typeof value !== "string" || !value.trim() || path.isAbsolute(value)) return null;
@@ -24,21 +24,6 @@ async function ensureSafeDirectory(root: string, relativeDirectory: string) {
       else throw error;
     }
   }
-}
-
-async function downloadPoster(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const url = new URL(value);
-  if (url.protocol !== "https:" || url.hostname !== "image.tmdb.org" || !url.pathname.startsWith("/t/p/")) throw new Error("Invalid poster source.");
-  const response = await fetch(url, { signal: AbortSignal.timeout(10_000), redirect: "error" });
-  if (!response.ok) throw new Error("Could not download the TMDB poster.");
-  const type = response.headers.get("content-type")?.split(";")[0];
-  if (type !== "image/jpeg" && type !== "image/png" && type !== "image/webp") throw new Error("TMDB returned an unsupported poster format.");
-  const declared = Number(response.headers.get("content-length") || 0);
-  if (declared > MAX_POSTER_BYTES) throw new Error("TMDB poster is too large.");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_POSTER_BYTES) throw new Error("TMDB poster is too large.");
-  return bytes;
 }
 
 export async function POST(request: Request) {
@@ -67,11 +52,11 @@ export async function POST(request: Request) {
       // Expected when the proposed destination is available.
     }
 
-    const poster = await downloadPoster(body.posterUrl);
+    const poster = await downloadTmdbPoster(body.posterUrl);
     await ensureSafeDirectory(root, path.dirname(destinationInsideRoot));
     await fs.rename(source, destination);
-    if (poster) await fs.writeFile(path.join(path.dirname(destination), "poster.jpg"), poster, { flag: "wx" }).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error; });
-    return Response.json({ success: true, message: poster ? "Movie organized with poster artwork." : "Movie organized successfully.", relativePath: destinationInsideRoot });
+    if (poster) await writePosterPair(path.dirname(destination), poster);
+    return Response.json({ success: true, message: poster ? "Movie organized with poster.jpg and folder.jpg artwork." : "Movie organized successfully.", relativePath: destinationInsideRoot });
   } catch (error) {
     return Response.json({ success: false, error: error instanceof Error ? error.message : "Could not organize movie." }, { status: 500 });
   }
