@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Movie } from "./types";
+import { isKidsMovie } from "./kids";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"]);
 const ARTWORK_NAMES = ["poster.jpg", "poster.jpeg", "poster.png", "folder.jpg", "folder.jpeg", "folder.png"];
@@ -89,6 +90,7 @@ export async function buildLibrary(): Promise<Movie[]> {
       size: stat.size,
       genre,
       genres: genre ? [genre] : [],
+      isKids: isKidsMovie(genre ? [genre] : [], null),
       overview: null,
       rating: null,
       runtimeMinutes: null,
