@@ -47,6 +47,22 @@ export default function ProfilesPage() {
     if (!response.ok) setError(result.error || "Could not update profile."); else await load();
   }
 
+  async function resetPassword(profile: Profile) {
+    const password = window.prompt(`Enter a new password for ${profile.displayName} (at least 8 characters):`);
+    if (password === null) return;
+    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
+    const confirmed = window.prompt("Enter the new password again:");
+    if (confirmed !== password) { setError("The passwords did not match."); return; }
+    setError("");
+    const response = await fetch("/api/admin/profiles", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: profile.id, password }),
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) setError(result.error || "Could not reset password.");
+    else window.alert(`${profile.displayName}'s password has been updated.`);
+  }
+
   return <main className="admin-shell">
     <header className="admin-header"><div><Link href="/settings">← System Status</Link><p className="eyebrow">OWNER ONLY</p><h1>Profiles</h1><p className="admin-copy">Create household logins here. Passwords and PINs are securely hashed and stored on your NAS.</p></div></header>
     {error ? <div className="state-card error">{error}</div> : null}
@@ -62,7 +78,7 @@ export default function ProfilesPage() {
       </form>
     </section>
     <section className="admin-panel"><p className="eyebrow">HOUSEHOLD ACCESS</p><h2>Managed profiles</h2>
-      <div className="profile-list">{profiles.length ? profiles.map((profile) => <article className="profile-row" key={profile.id}><div className={`profile-avatar role-${profile.role}`}>{profile.displayName.slice(0, 1).toUpperCase()}</div><div><strong>{profile.displayName}</strong><span>@{profile.username} · {profile.role}{profile.expiresAt ? ` · expires ${new Date(profile.expiresAt).toLocaleString()}` : ""}</span></div><div className="profile-actions"><button className="secondary-button" onClick={() => void change(profile, "toggle")}>{profile.disabled ? "Enable" : "Disable"}</button><button className="danger-button" onClick={() => void change(profile, "delete")}>Delete</button></div></article>) : <p className="admin-copy">No extra profiles yet. Your environment login is the Owner account.</p>}</div>
+      <div className="profile-list">{profiles.length ? profiles.map((profile) => <article className="profile-row" key={profile.id}><div className={`profile-avatar role-${profile.role}`}>{profile.displayName.slice(0, 1).toUpperCase()}</div><div><strong>{profile.displayName}</strong><span>@{profile.username} · {profile.role}{profile.expiresAt ? ` · expires ${new Date(profile.expiresAt).toLocaleString()}` : ""}</span></div><div className="profile-actions"><button className="secondary-button" onClick={() => void resetPassword(profile)}>Reset password</button><button className="secondary-button" onClick={() => void change(profile, "toggle")}>{profile.disabled ? "Enable" : "Disable"}</button><button className="danger-button" onClick={() => void change(profile, "delete")}>Delete</button></div></article>) : <p className="admin-copy">No extra profiles yet. Your environment login is the Owner account.</p>}</div>
     </section>
   </main>;
 }
