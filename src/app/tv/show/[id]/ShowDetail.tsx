@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { TvSidebar } from "@/components/media/TvSidebar";
 import { useTvNavigation } from "@/components/media/useTvNavigation";
+import { OfflineDownloadButton } from "@/components/media/OfflineDownloadButton";
 import type { LibraryResponse, Movie } from "@/lib/media/types";
 
 export default function ShowDetail({ id }: { id: string }) {
@@ -42,7 +43,7 @@ export default function ShowDetail({ id }: { id: string }) {
     </section>
     <section className="show-seasons">
       <div className="season-toolbar"><div><p className="eyebrow">EPISODE GUIDE</p><h2>Season {String(activeSeason).padStart(2, "0")}</h2></div><div className="season-tabs" aria-label="Choose season">{seasons.map((season) => <button key={season} type="button" className={`season-tab focusable${season === activeSeason ? " active" : ""}`} data-focusable="true" aria-pressed={season === activeSeason} onClick={() => setSelectedSeason(season)}>Season {season}</button>)}</div></div>
-      <section className="season-section"><div className="episode-list">{seasonEpisodes.map((episode) => { const state = progress.find((item) => item.mediaId === episode.id); return <Link key={episode.id} href={`/tv/watch/${episode.id}`} className="episode-card focusable" data-focusable="true"><div className="episode-thumb">{episode.posterUrl ? <img /* eslint-disable-line @next/next/no-img-element -- NAS art supports TV browsers */ src={episode.posterUrl} alt="" /> : <span>CH</span>}<b>{state?.completed ? "✓" : "▶"}</b></div><div><small>EPISODE {String(episode.episodeNumber || 0).padStart(2, "0")}{state?.completed ? " · WATCHED" : state?.seconds ? " · CONTINUE" : ""}</small><h3>{episode.title}</h3><p>{episode.overview || episode.fileName}</p></div></Link>; })}</div></section>
+      <section className="season-section"><div className="episode-list">{seasonEpisodes.map((episode) => { const state = progress.find((item) => item.mediaId === episode.id); return <article key={episode.id} className="episode-entry"><Link href={`/tv/watch/${episode.id}`} className="episode-card focusable" data-focusable="true"><div className="episode-thumb">{episode.posterUrl ? <img /* eslint-disable-line @next/next/no-img-element -- NAS art supports TV browsers */ src={episode.posterUrl} alt="" /> : <span>CH</span>}<b>{state?.completed ? "✓" : "▶"}</b></div><div><small>EPISODE {String(episode.episodeNumber || 0).padStart(2, "0")}{state?.completed ? " · WATCHED" : state?.seconds ? " · CONTINUE" : ""}</small><h3>{episode.title}</h3><p>{episode.overview || episode.fileName}</p></div></Link><OfflineDownloadButton movie={episode} compact /></article>; })}</div></section>
     </section>
   </main>;
 }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useTvNavigation } from "@/components/media/useTvNavigation";
+import { OfflineDownloadButton } from "@/components/media/OfflineDownloadButton";
 import type { Movie } from "@/lib/media/types";
 
 export default function MovieDetail({ id }: { id: string }) {
@@ -44,6 +45,7 @@ export default function MovieDetail({ id }: { id: string }) {
       <div className="hero-actions">
         <Link href={`/tv/watch/${movie.id}`} className="primary-button focusable" data-focusable="true">▶ {resume > 30 ? "Resume" : "Play"}</Link>
         <button className="secondary-button focusable" data-focusable="true" onClick={() => { const included = !watchlisted; setWatchlisted(included); void fetch("/api/user/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "watchlist", mediaId: id, included }) }); }}>{watchlisted ? "✓ In My List" : "+ My List"}</button>
+        <OfflineDownloadButton movie={movie} />
         {resume > 30 ? <button className="secondary-button focusable" data-focusable="true" onClick={() => { localStorage.removeItem(`constants-hub-progress:${id}`); localStorage.removeItem(`cmv-progress:${id}`); setResume(0); void fetch("/api/user/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "clear-progress", mediaId: id }) }); }}>Start over</button> : null}
       </div>
       <small className="file-label">{movie.fileName}</small>

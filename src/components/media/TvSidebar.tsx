@@ -11,6 +11,7 @@ const links = [
   { href: "/tv/browse?view=kids", icon: "★", label: "Kids & Family" },
   { href: "/tv/browse?view=movies", icon: "▶", label: "Movies" },
   { href: "/tv/collections", icon: "◆", label: "Collections" },
+  { href: "/tv/offline", icon: "↓", label: "Offline" },
   { href: "/tv/cinema-night", icon: "✦", label: "Cinema Night" },
   { href: "/tv/ambient", icon: "◌", label: "Ambient Mode" },
 ];
@@ -39,6 +40,6 @@ export function TvSidebar() {
         <button className="sidebar-close focusable" data-focusable="true" onClick={() => setOpen(false)}>Close</button>
       </div>
     </aside>
-    <nav className="mobile-dock" aria-label="Quick navigation">{links.filter((item) => ["Home", "TV Shows", "Movies", "Collections"].includes(item.label)).map((item) => <Link key={item.href} href={item.href} className={pathname === item.href.split("?")[0] ? "active" : ""}><span aria-hidden="true">{item.icon}</span><small>{item.label}</small></Link>)}</nav>
+    <nav className="mobile-dock" aria-label="Quick navigation">{links.filter((item) => ["Home", "TV Shows", "Movies", "Offline"].includes(item.label)).map((item) => <Link key={item.href} href={item.href} className={pathname === item.href.split("?")[0] ? "active" : ""}><span aria-hidden="true">{item.icon}</span><small>{item.label}</small></Link>)}</nav>
   </>;
 }

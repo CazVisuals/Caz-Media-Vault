@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Movie } from "@/lib/media/types";
+import { OfflineDownloadButton } from "@/components/media/OfflineDownloadButton";
+import { getOfflineDownload, type OfflineDownload } from "@/lib/offline/client";
 
 function compatibility(fileName: string) {
   const extension = fileName.split(".").pop()?.toLowerCase();
@@ -19,9 +21,12 @@ export default function Player({ id }: { id: string }) {
   const [episodes, setEpisodes] = useState<Movie[]>([]);
   const [showUpNext, setShowUpNext] = useState(false);
   const [castAvailable, setCastAvailable] = useState(false);
-  useEffect(() => { const video = videoRef.current as (HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; remote?: { prompt: () => Promise<void> } }) | null; setCastAvailable(Boolean(video?.webkitShowPlaybackTargetPicker || video?.remote?.prompt)); }, []);
+  const [offlineDownload, setOfflineDownload] = useState<OfflineDownload | null>(null);
+  const [sourceReady, setSourceReady] = useState(false);
+  useEffect(() => { const video = videoRef.current as (HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; remote?: { prompt: () => Promise<void> } }) | null; setCastAvailable(Boolean(video?.webkitShowPlaybackTargetPicker || video?.remote?.prompt)); }, [sourceReady]);
 
   useEffect(() => {
+    void getOfflineDownload(id).then((download) => { setOfflineDownload(download?.status === "ready" ? download : null); setSourceReady(true); }).catch(() => setSourceReady(true));
     fetch(`/api/media/library/${id}`, { cache: "no-store" })
       .then(async (response) => {
         const result = await response.json() as { movie?: Movie };
@@ -30,7 +35,7 @@ export default function Player({ id }: { id: string }) {
           if (result.movie.mediaType === "tv") void fetch("/api/media/library", { cache: "no-store" }).then((libraryResponse) => libraryResponse.json()).then((library: { movies?: Movie[] }) => setEpisodes((library.movies || []).filter((item) => item.mediaType === "tv" && (item.seriesTitle || item.title).toLowerCase() === (result.movie!.seriesTitle || result.movie!.title).toLowerCase()).sort((a, b) => (a.seasonNumber || 0) - (b.seasonNumber || 0) || (a.episodeNumber || 0) - (b.episodeNumber || 0)))).catch(() => undefined);
         }
       })
-      .catch(() => undefined);
+      .catch(() => { void getOfflineDownload(id).then((download) => { if (!download) return; setMovie({ id: download.id, title: download.title, year: download.year, fileName: download.fileName, relativePath: "", modifiedAt: download.updatedAt, size: download.size, genre: null, genres: [], isKids: false, mediaType: download.mediaType, seriesTitle: download.seriesTitle, seasonNumber: download.seasonNumber, episodeNumber: download.episodeNumber, overview: null, rating: null, runtimeMinutes: null, tmdbId: null, tagline: null, certification: null, collection: null, posterUrl: null, backdropUrl: null, trailerYouTubeId: null }); }); });
   }, [id]);
 
   useEffect(() => {
@@ -52,18 +57,20 @@ export default function Player({ id }: { id: string }) {
     video.addEventListener("ended", onEnded);
     video.focus();
     return () => { save(true); video.removeEventListener("loadedmetadata", restore); video.removeEventListener("timeupdate", onTimeUpdate); video.removeEventListener("ended", onEnded); };
-  }, [episodes, id, movie?.mediaType, router]);
+  }, [episodes, id, movie?.mediaType, router, sourceReady]);
 
   const nextEpisode = useMemo(() => episodes[episodes.findIndex((item) => item.id === id) + 1] || null, [episodes, id]);
   async function cast() { const video = videoRef.current as (HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; remote?: { prompt: () => Promise<void> } }) | null; if (video?.webkitShowPlaybackTargetPicker) video.webkitShowPlaybackTargetPicker(); else await video?.remote?.prompt().catch(() => undefined); }
 
   const warning = movie ? compatibility(movie.fileName) : null;
   return <main className="player-shell">
-    <Link href={`/tv/movie/${id}`} className="player-back">← Back</Link>
+    <Link href={movie?.mediaType === "tv" ? `/tv/show/${id}` : `/tv/movie/${id}`} className="player-back">← Back</Link>
     {castAvailable ? <button className="player-cast secondary-button" onClick={() => void cast()}>▣ Cast</button> : null}
-    <video ref={videoRef} src={`/api/media/stream/${id}`} controls autoPlay playsInline preload="metadata" {...{ "x-webkit-airplay": "allow" }} onError={() => setPlaybackError("This video format or audio codec is not supported by this device.")}>
+    {movie ? <div className="player-download"><OfflineDownloadButton movie={movie} compact /></div> : null}
+    {sourceReady ? <video ref={videoRef} src={offlineDownload ? `/__offline/media/${id}` : `/api/media/stream/${id}`} controls autoPlay playsInline preload="metadata" {...{ "x-webkit-airplay": "allow" }} onError={() => setPlaybackError("This video format or audio codec is not supported by this device.")}>
       <track kind="subtitles" src={`/api/media/subtitles/${id}`} srcLang="en" label="English" />
-    </video>
+    </video> : <div className="player-loading">Preparing player…</div>}
+    {offlineDownload ? <span className="player-offline-badge">✓ Playing offline copy</span> : null}
     {showUpNext && nextEpisode ? <aside className="up-next"><small>UP NEXT</small><strong>{nextEpisode.title}</strong><div><button className="primary-button" onClick={() => router.replace(`/tv/watch/${nextEpisode.id}`)}>Play now</button><button className="secondary-button" onClick={() => setShowUpNext(false)}>Dismiss</button></div></aside> : null}
     {warning || playbackError ? <aside className="player-notice" role="alert"><strong>{playbackError ? "Playback unavailable" : "Mobile compatibility"}</strong><p>{playbackError || warning}</p><small>Original file: {movie?.fileName || "Loading…"}</small></aside> : null}
   </main>;
