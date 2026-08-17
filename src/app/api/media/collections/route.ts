@@ -1,11 +1,10 @@
 import { NextRequest } from "next/server";
-import { currentSession, requireOwner } from "@/lib/auth/request";
+import { requireOwner } from "@/lib/auth/request";
 import { deleteCustomCollection, getCustomCollections, saveCustomCollection } from "@/lib/app-data/store";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
-  if (!await currentSession(request)) return Response.json({ collections: {} }, { status: 401 });
+export async function GET() {
   return Response.json({ collections: await getCustomCollections() }, { headers: { "Cache-Control": "no-store" } });
 }
 

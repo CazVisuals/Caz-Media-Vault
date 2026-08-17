@@ -7,10 +7,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   const session = await currentSession(request);
-  if (!session) return Response.json({ error: "Sign in required." }, { status: 401 });
   let movies = (await buildLibrary()).filter((item) => item.mediaType === "movie");
-  if (session.role === "kids") movies = movies.filter((item) => item.isKids);
-  const watched = new Set((await getProfileState(session.profileId)).progress.filter((item) => item.completed).map((item) => item.mediaId));
+  if (session?.role === "kids") movies = movies.filter((item) => item.isKids);
+  const watched = new Set(session ? (await getProfileState(session.profileId)).progress.filter((item) => item.completed).map((item) => item.mediaId) : []);
   const candidates = movies.filter((item) => !watched.has(item.id));
   const pool = candidates.length ? candidates : movies;
   const selected = pool[Math.floor(Math.random() * pool.length)];
