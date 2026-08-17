@@ -105,7 +105,27 @@ export async function revokeInvite(id: string) {
   return mutate((invites) => {
     const invite = invites.find((item) => item.id === id);
     if (!invite) throw new Error("Invite not found.");
-    if (!invite.acceptedAt) invite.revokedAt = new Date().toISOString();
+    if (status(invite) !== "pending") throw new Error("Only pending invites can be revoked.");
+    invite.revokedAt = new Date().toISOString();
     return publicInvite(invite);
+  });
+}
+
+export async function deleteInvite(id: string) {
+  return mutate((invites) => {
+    const index = invites.findIndex((item) => item.id === id);
+    if (index < 0) throw new Error("Invite not found.");
+    if (status(invites[index]) === "pending") throw new Error("Revoke a pending invite before deleting it.");
+    invites.splice(index, 1);
+    return true;
+  });
+}
+
+export async function clearInviteHistory() {
+  return mutate((invites) => {
+    const pending = invites.filter((item) => status(item) === "pending");
+    const removed = invites.length - pending.length;
+    invites.splice(0, invites.length, ...pending);
+    return removed;
   });
 }
