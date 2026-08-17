@@ -1,6 +1,7 @@
 services:
   media-vault:
-    build: .
+    image: ${MEDIA_VAULT_IMAGE:-ghcr.io/cazvisuals/caz-media-vault:edge}
+    pull_policy: always
     container_name: constants-hub
     # Synology shared-folder ACLs commonly block the image's unprivileged UID.
     # Organizer writes are constrained in application code to files in Inbox.
