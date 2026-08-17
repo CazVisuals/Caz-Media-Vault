@@ -60,7 +60,7 @@ export function TvSidebar() {
     <aside className={`tv-sidebar${open ? " open" : ""}`}>
       <Link href="/tv" className="sidebar-brand focusable" data-focusable="true" onClick={() => setOpen(false)}>
         <span className="sidebar-logo-mark">C</span>
-        <span className="sidebar-brand-copy"><strong>CAZ</strong><small>MEDIA VAULT</small></span>
+        <span className="sidebar-brand-copy"><strong>CONSTANT&apos;S</strong><small>MEDIA VAULT</small></span>
       </Link>
       <nav aria-label="Main navigation">
         {links.map((item) => <Link key={`${item.href}-${item.label}`} href={item.href} className={`sidebar-link focusable${isActive(item.href) && item.label !== "My List" ? " active" : ""}`} data-focusable="true" onClick={() => setOpen(false)}><span aria-hidden="true">{item.icon}</span>{item.label}</Link>)}
