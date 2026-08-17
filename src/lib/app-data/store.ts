@@ -32,9 +32,11 @@ type AppData = {
   progress: Record<string, Record<string, ProgressRecord>>;
   watchlists: Record<string, string[]>;
   customCollections: Record<string, string[]>;
+  hiddenCollections: string[];
+  collectionArtwork: Record<string, string>;
 };
 
-const EMPTY_DATA: AppData = { version: 1, profiles: [], progress: {}, watchlists: {}, customCollections: {} };
+const EMPTY_DATA: AppData = { version: 1, profiles: [], progress: {}, watchlists: {}, customCollections: {}, hiddenCollections: [], collectionArtwork: {} };
 let writes = Promise.resolve();
 
 function dataPath() {
@@ -50,6 +52,8 @@ async function readData(): Promise<AppData> {
       progress: parsed.progress && typeof parsed.progress === "object" ? parsed.progress : {},
       watchlists: parsed.watchlists && typeof parsed.watchlists === "object" ? parsed.watchlists : {},
       customCollections: parsed.customCollections && typeof parsed.customCollections === "object" ? parsed.customCollections : {},
+      hiddenCollections: Array.isArray(parsed.hiddenCollections) ? parsed.hiddenCollections.filter((item): item is string => typeof item === "string") : [],
+      collectionArtwork: parsed.collectionArtwork && typeof parsed.collectionArtwork === "object" ? parsed.collectionArtwork : {},
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return structuredClone(EMPTY_DATA);
@@ -202,11 +206,18 @@ export async function restoreAppData(value: unknown) {
     data.progress = candidate.progress as AppData["progress"];
     data.watchlists = candidate.watchlists as AppData["watchlists"];
     data.customCollections = candidate.customCollections && typeof candidate.customCollections === "object" ? candidate.customCollections : {};
+    data.hiddenCollections = Array.isArray(candidate.hiddenCollections) ? candidate.hiddenCollections.filter((item): item is string => typeof item === "string") : [];
+    data.collectionArtwork = candidate.collectionArtwork && typeof candidate.collectionArtwork === "object" ? candidate.collectionArtwork : {};
     return true;
   });
 }
 
 export async function getCustomCollections() { return (await readData()).customCollections; }
+
+export async function getCollectionPreferences() {
+  const data = await readData();
+  return { hiddenCollections: data.hiddenCollections, collectionArtwork: data.collectionArtwork };
+}
 
 export async function saveCustomCollection(name: string, mediaIds: string[]) {
   const cleanName = name.trim().slice(0, 60);
@@ -216,5 +227,27 @@ export async function saveCustomCollection(name: string, mediaIds: string[]) {
 }
 
 export async function deleteCustomCollection(name: string) {
-  return mutate((data) => { delete data.customCollections[name]; return data.customCollections; });
+  return mutate((data) => { delete data.customCollections[name]; delete data.collectionArtwork[name]; return data.customCollections; });
+}
+
+export async function renameCustomCollection(previousName: string, name: string, mediaIds: string[]) {
+  const cleanPrevious = previousName.trim();
+  const result = await saveCustomCollection(name, mediaIds);
+  if (cleanPrevious && cleanPrevious !== name.trim()) await deleteCustomCollection(cleanPrevious);
+  return result;
+}
+
+export async function updateCollectionPreferences(name: string, input: { hidden?: boolean; artworkId?: string | null }) {
+  const cleanName = name.trim().slice(0, 60);
+  if (!cleanName) throw new Error("Collection name is required.");
+  return mutate((data) => {
+    if (typeof input.hidden === "boolean") {
+      const hidden = new Set(data.hiddenCollections);
+      if (input.hidden) hidden.add(cleanName); else hidden.delete(cleanName);
+      data.hiddenCollections = [...hidden];
+    }
+    if (input.artworkId === null) delete data.collectionArtwork[cleanName];
+    else if (input.artworkId && /^[a-f0-9]{24}$/u.test(input.artworkId)) data.collectionArtwork[cleanName] = input.artworkId;
+    return { hiddenCollections: data.hiddenCollections, collectionArtwork: data.collectionArtwork };
+  });
 }
