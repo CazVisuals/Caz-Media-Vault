@@ -38,10 +38,27 @@ Do not commit `.env.local`, Cloudflare tunnel credentials, API tokens, or NAS cr
 
 ## Synology Container Manager
 
-The included Compose file defaults to your confirmed DS223 shared folder, `/volume1/video`, and mounts it read/write at `/media` for the approved Inbox organizer and conversion queue:
+The included Compose file defaults to your confirmed DS223 shared folder, `/volume1/video`, and mounts it read/write at `/media` for the approved Inbox organizer and conversion queue. It now pulls the prebuilt ARM64 image from GitHub Container Registry instead of rebuilding Next.js on the NAS:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
+```
+
+GitHub Actions validates lint, TypeScript, and the production build before publishing multi-platform images. The `agent/media-vault-foundation` branch publishes `ghcr.io/cazvisuals/caz-media-vault:edge`; `main` publishes `:latest`; every build also receives a permanent `sha-...` rollback tag.
+
+Because the repository and package remain private, authenticate the NAS once using a GitHub classic personal access token with only `read:packages`:
+
+```bash
+echo 'YOUR_READ_PACKAGES_TOKEN' | docker login ghcr.io -u CazVisuals --password-stdin
+```
+
+Do not put that token in `.env` or the repository. After login, updating is only `docker compose pull && docker compose up -d`. The included `synology-update.sh` performs the pull, safe recreation, and unused-image cleanup; it can be run manually or from DSM **Control Panel → Task Scheduler**. Pass the project folder as its first argument if yours differs from `/volume1/Caz Visuals/docker/constants-hub`.
+
+For an emergency local build without GitHub Container Registry, keep the source files and run:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 The organizer still restricts moves to sources inside `/media/Inbox`, rejects paths outside the media root, blocks unsafe symlink destinations, and refuses overwrites.
