@@ -57,6 +57,24 @@ async function putChunk(mediaId: string, index: number, bytes: ArrayBuffer) {
   database.close();
 }
 
+async function getChunk(mediaId: string, index: number) {
+  const database = await openOfflineDatabase();
+  const result = await requestResult(database.transaction("chunks").objectStore("chunks").get(`${mediaId}:${index}`)) as { bytes?: ArrayBuffer } | undefined;
+  database.close();
+  return result?.bytes || null;
+}
+
+export async function verifyOfflineDownload(download: OfflineDownload) {
+  if (download.status !== "ready" || download.chunkCount < 1 || download.size < 1) return false;
+  let storedBytes = 0;
+  for (let index = 0; index < download.chunkCount; index += 1) {
+    const chunk = await getChunk(download.id, index);
+    if (!chunk?.byteLength) return false;
+    storedBytes += chunk.byteLength;
+  }
+  return storedBytes === download.size && download.downloadedBytes === download.size;
+}
+
 export async function getOfflineDownload(id: string) {
   const database = await openOfflineDatabase();
   const result = await requestResult(database.transaction("downloads").objectStore("downloads").get(id)) as OfflineDownload | undefined;
@@ -126,8 +144,14 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
       }
     }
     if (pending.length) { await putChunk(movie.id, chunkIndex, pending.buffer); chunkIndex += 1; offset += pending.length; }
-    download = { ...download, downloadedBytes: offset, chunkCount: chunkIndex, status: "ready", updatedAt: new Date().toISOString(), error: null };
-    await putDownload(download); onProgress(download); return download;
+    download = { ...download, size: total || offset, downloadedBytes: offset, chunkCount: chunkIndex, status: "ready", updatedAt: new Date().toISOString(), error: null };
+    await putDownload(download);
+    if (!await verifyOfflineDownload(download)) {
+      download = { ...download, status: "failed", error: "The saved copy is incomplete. Tap Resume to finish downloading it.", updatedAt: new Date().toISOString() };
+      await putDownload(download); onProgress(download);
+      throw new Error(download.error!);
+    }
+    onProgress(download); return download;
   } catch (reason) {
     const paused = signal?.aborted;
     download = { ...download, downloadedBytes: offset, chunkCount: chunkIndex, status: paused ? "paused" : "failed", updatedAt: new Date().toISOString(), error: paused ? null : reason instanceof Error ? reason.message : "Download interrupted." };
