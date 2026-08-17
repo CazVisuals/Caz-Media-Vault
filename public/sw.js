@@ -1,4 +1,4 @@
-const CACHE = "constants-hub-shell-v3";
+const CACHE = "constants-hub-shell-v4";
 const DB_NAME = "constants-hub-offline";
 const DB_VERSION = 1;
 const CHUNK_SIZE = 2 * 1024 * 1024;
