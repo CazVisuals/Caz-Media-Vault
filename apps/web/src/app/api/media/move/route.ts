@@ -1,120 +1,64 @@
-import { NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getMediaRoot } from "@/lib/media/catalog";
+import { downloadTmdbPoster, writePosterPair } from "@/lib/media/posters";
 
-const MEDIA_ROOT = "/Volumes/video";
+export const runtime = "nodejs";
 
-function isInsideMediaRoot(filePath: string) {
-  const resolvedRoot = path.resolve(MEDIA_ROOT);
-  const resolvedPath = path.resolve(filePath);
+function safeRelative(value: unknown) {
+  if (typeof value !== "string" || !value.trim() || path.isAbsolute(value)) return null;
+  const normalized = path.normalize(value.trim());
+  if (normalized === "." || normalized.startsWith("..") || normalized.includes(`..${path.sep}`)) return null;
+  return normalized;
+}
 
-  return (
-    resolvedPath === resolvedRoot ||
-    resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)
-  );
+async function ensureSafeDirectory(root: string, relativeDirectory: string) {
+  let current = root;
+  for (const segment of relativeDirectory.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Unsafe destination directory.");
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") await fs.mkdir(current);
+      else throw error;
+    }
+  }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = await request.json() as { sourceRelativePath?: unknown; destinationRelativePath?: unknown; posterUrl?: unknown };
+    const sourceRelative = safeRelative(body.sourceRelativePath);
+    const destinationRelative = safeRelative(body.destinationRelativePath);
+    if (!sourceRelative || !destinationRelative) return Response.json({ success: false, error: "Safe relative source and destination paths are required." }, { status: 400 });
 
-    const source =
-      typeof body.source === "string"
-        ? body.source
-        : "";
+    const root = await fs.realpath(/* turbopackIgnore: true */ getMediaRoot());
+    const inboxConfigured = path.resolve(/* turbopackIgnore: true */ process.env.MEDIA_INBOX?.trim() || path.join(root, "Inbox"));
+    const inbox = await fs.realpath(/* turbopackIgnore: true */ inboxConfigured);
+    const source = await fs.realpath(/* turbopackIgnore: true */ path.resolve(root, sourceRelative));
+    const sourceInsideInbox = path.relative(inbox, source);
+    if (!sourceInsideInbox || sourceInsideInbox.startsWith("..") || path.isAbsolute(sourceInsideInbox)) return Response.json({ success: false, error: "Only files inside Inbox can be organized." }, { status: 403 });
 
-    const destination =
-      typeof body.destination === "string"
-        ? body.destination
-        : "";
-
-    if (!source || !destination) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Source and destination are required.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (
-      !isInsideMediaRoot(source) ||
-      !isInsideMediaRoot(destination)
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid media path.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (source === destination) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Movie is already in the suggested location.",
-        },
-        { status: 400 }
-      );
-    }
-
-    try {
-      await fs.access(source);
-    } catch {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Source movie no longer exists.",
-        },
-        { status: 404 }
-      );
-    }
+    if (destinationRelative.split(path.sep)[0].toLowerCase() === "inbox") return Response.json({ success: false, error: "Destination must be outside Inbox." }, { status: 400 });
+    const destination = path.resolve(root, destinationRelative);
+    const destinationInsideRoot = path.relative(root, destination);
+    if (!destinationInsideRoot || destinationInsideRoot.startsWith("..") || path.isAbsolute(destinationInsideRoot)) return Response.json({ success: false, error: "Destination escapes the media root." }, { status: 400 });
 
     try {
       await fs.access(destination);
-
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "A file already exists at the destination. Nothing was moved.",
-        },
-        { status: 409 }
-      );
+      return Response.json({ success: false, error: "A file already exists at the destination. Nothing was moved." }, { status: 409 });
     } catch {
-      // Destination does not exist. Safe to continue.
+      // Expected when the proposed destination is available.
     }
 
-    const destinationFolder =
-      path.dirname(destination);
-
-    await fs.mkdir(destinationFolder, {
-      recursive: true,
-    });
-
+    const poster = await downloadTmdbPoster(body.posterUrl);
+    await ensureSafeDirectory(root, path.dirname(destinationInsideRoot));
     await fs.rename(source, destination);
-
-    return NextResponse.json({
-      success: true,
-      message: "Movie organized successfully.",
-      previousPath: source,
-      newPath: destination,
-    });
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Could not move movie.";
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: message,
-      },
-      { status: 500 }
-    );
+    if (poster) await writePosterPair(path.dirname(destination), poster);
+    const isEpisode = destinationInsideRoot.split(path.sep)[0].toLowerCase() === "tv shows";
+    return Response.json({ success: true, message: poster ? `${isEpisode ? "Episode" : "Movie"} organized with poster.jpg and folder.jpg artwork.` : `${isEpisode ? "Episode" : "Movie"} organized successfully.`, relativePath: destinationInsideRoot });
+  } catch (error) {
+    return Response.json({ success: false, error: error instanceof Error ? error.message : "Could not organize movie." }, { status: 500 });
   }
 }

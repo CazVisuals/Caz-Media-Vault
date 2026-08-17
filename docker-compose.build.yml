@@ -1,0 +1,5 @@
+services:
+  media-vault:
+    build: .
+    pull_policy: build
+

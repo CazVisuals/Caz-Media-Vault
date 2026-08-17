@@ -1,0 +1,63 @@
+name: Validate and publish container
+
+on:
+  push:
+    branches:
+      - main
+      - agent/media-vault-foundation
+  workflow_dispatch:
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: cazvisuals/caz-media-vault
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  publish:
+    needs: validate
+    # The production DS223 is ARM64, so build on native ARM hardware instead
+    # of emulating it through QEMU.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Sign in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${{ env.REGISTRY }}" --username "${{ github.actor }}" --password-stdin
+      - name: Build and publish native ARM64 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE_NAME}"
+          channel="edge"
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then channel="latest"; fi
+          sha_tag="sha-${GITHUB_SHA::7}"
+          docker build \
+            --label "org.opencontainers.image.title=Constant's Hub" \
+            --label "org.opencontainers.image.description=Private NAS-backed household media platform" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${image}:${channel}" \
+            --tag "${image}:${sha_tag}" \
+            .
+          docker push "${image}:${channel}"
+          docker push "${image}:${sha_tag}"

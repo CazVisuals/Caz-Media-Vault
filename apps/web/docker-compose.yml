@@ -1,0 +1,36 @@
+services:
+  media-vault:
+    build: .
+    container_name: constants-hub
+    # Synology shared-folder ACLs commonly block the image's unprivileged UID.
+    # Organizer writes are constrained in application code to files in Inbox.
+    user: "0:0"
+    restart: unless-stopped
+    environment:
+      MEDIA_ROOT: /media
+      MEDIA_INBOX: /media/Inbox
+      TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN:-}
+      AUTH_USERNAME: ${AUTH_USERNAME:-}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      - "${MEDIA_HOST_PATH:-/volume1/video}:/media:rw"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: constants-hub-tunnel
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: tunnel --no-autoupdate run
+    depends_on:
+      media-vault:
+        condition: service_healthy
