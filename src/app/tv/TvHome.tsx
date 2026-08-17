@@ -14,7 +14,7 @@ import type { LibraryResponse, Movie } from "@/lib/media/types";
 export default function TvHome() {
   const router = useRouter();
   const [movies, setMovies] = useState<Movie[]>([]);
-  const [query, setQuery] = useState("");
+  const query = "";
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -99,14 +99,15 @@ export default function TvHome() {
       <TvSidebar />
       <header className="topbar">
         <Link href="/tv" className="brand focusable" data-focusable="true"><span>CONSTANT’S</span> HUB</Link>
-        <nav><button className={`nav-button nav-refresh focusable${refreshing ? " spinning" : ""}`} data-focusable="true" aria-label="Refresh library" title="Refresh library" onClick={() => window.location.reload()}>↻</button><Link href="/tv/browse?view=movies" className="focusable" data-focusable="true">Movies</Link>{owner ? <Link href="/settings" className="focusable" data-focusable="true">Admin</Link> : null}</nav>
+        <div className="mobile-profile"><span>{(profile?.displayName || "H").slice(0, 1).toUpperCase()}</span><strong>{profile?.displayName || "Home"}</strong></div>
+        <nav><Link href="/tv/search" className="header-icon focusable" data-focusable="true" aria-label="Search">⌕</Link><Link href="/tv/offline" className="header-icon focusable" data-focusable="true" aria-label="Downloads">↓</Link><button className={`nav-button nav-refresh focusable${refreshing ? " spinning" : ""}`} data-focusable="true" aria-label="Refresh library" title="Refresh library" onClick={() => window.location.reload()}>↻</button><Link href="/tv/browse?view=movies" className="desktop-nav-link focusable" data-focusable="true">Movies</Link>{owner ? <Link href="/settings" className="desktop-nav-link focusable" data-focusable="true">Admin</Link> : null}</nav>
       </header>
 
       <FeaturedHero movies={movies} />
 
       <section className="content-area">
         <section className="welcome-strip"><div><p className="eyebrow">WELCOME BACK</p><h2>{profile?.displayName ? `${profile.displayName}’s cinema` : "Your private cinema"}</h2><p>Pick up where you left off or set the mood for tonight.</p></div><div className="experience-actions"><Link href="/tv/cinema-night" className="secondary-button focusable" data-focusable="true">✦ Cinema Night</Link><Link href="/tv/ambient" className="secondary-button focusable" data-focusable="true">◌ Ambient Mode</Link></div></section>
-        <div className="library-tools"><label className="search-wrap"><span>Search library</span><input data-focusable="true" className="focusable" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, year, or genre…" /></label><button className="secondary-button focusable" data-focusable="true" onClick={() => void fetch("/api/media/surprise", { cache: "no-store" }).then((response) => response.json()).then((result: { id?: string }) => { if (result.id) router.push(`/tv/movie/${result.id}`); })}>🎲 Surprise Me</button></div>
+        <div className="library-tools"><Link href="/tv/search" className="search-launch focusable" data-focusable="true"><span>⌕</span><strong>Search shows, movies, genres…</strong></Link><button className="secondary-button focusable" data-focusable="true" onClick={() => void fetch("/api/media/surprise", { cache: "no-store" }).then((response) => response.json()).then((result: { id?: string }) => { if (result.id) router.push(`/tv/movie/${result.id}`); })}>🎲 Surprise Me</button></div>
         {loading ? <div className="state-card">Scanning your media vault…</div> : null}
         {error ? <div className="state-card error">{error}<small>Confirm MEDIA_ROOT points to your mounted NAS.</small></div> : null}
         {!loading && !error && movies.length === 0 ? <div className="state-card">No movie files found outside Inbox.</div> : null}

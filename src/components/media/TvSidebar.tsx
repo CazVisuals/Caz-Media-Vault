@@ -16,6 +16,13 @@ const links = [
   { href: "/tv/ambient", icon: "◌", label: "Ambient Mode" },
 ];
 
+const mobileLinks = [
+  { href: "/tv", icon: "⌂", label: "Home" },
+  { href: "/tv/browse?view=shows", icon: "▣", label: "Shows" },
+  { href: "/tv/search", icon: "⌕", label: "Search" },
+  { href: "/tv/offline", icon: "↓", label: "Downloads" },
+];
+
 export function TvSidebar() {
   const router = useRouter();
   const pathname = usePathname();
@@ -40,6 +47,6 @@ export function TvSidebar() {
         <button className="sidebar-close focusable" data-focusable="true" onClick={() => setOpen(false)}>Close</button>
       </div>
     </aside>
-    <nav className="mobile-dock" aria-label="Quick navigation">{links.filter((item) => ["Home", "TV Shows", "Movies", "Offline"].includes(item.label)).map((item) => <Link key={item.href} href={item.href} className={pathname === item.href.split("?")[0] ? "active" : ""}><span aria-hidden="true">{item.icon}</span><small>{item.label}</small></Link>)}</nav>
+    <nav className="mobile-dock" aria-label="Quick navigation">{mobileLinks.map((item) => <Link key={item.href} href={item.href} className={pathname === item.href.split("?")[0] ? "active" : ""}><span aria-hidden="true">{item.icon}</span><small>{item.label}</small></Link>)}</nav>
   </>;
 }
