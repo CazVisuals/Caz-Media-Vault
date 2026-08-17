@@ -15,11 +15,11 @@ function isPrivateHostname(hostname: string) {
 }
 
 function isPublicAuthRoute(pathname: string) {
-  return pathname === "/login" || pathname === "/api/auth/login" || pathname === "/api/auth/logout" || pathname === "/api/auth/status";
+  return pathname === "/login" || pathname === "/api/auth/login" || pathname === "/api/auth/logout" || pathname === "/api/auth/status" || pathname.startsWith("/invite/") || pathname.startsWith("/api/invite/");
 }
 
 function isOwnerOnlyRoute(pathname: string) {
-  return pathname === "/settings/profiles" || pathname === "/api/admin/profiles" || pathname === "/api/admin/backup";
+  return pathname === "/settings/profiles" || pathname === "/api/admin/profiles" || pathname === "/api/admin/invites" || pathname === "/api/admin/backup";
 }
 
 function isAdminRoute(pathname: string) {
@@ -29,21 +29,15 @@ function isAdminRoute(pathname: string) {
 }
 
 export async function proxy(request: NextRequest) {
-  const cameThroughCloudflare = Boolean(
-    request.headers.get("cf-ray") || request.headers.get("cf-connecting-ip"),
-  );
+  const cameThroughCloudflare = Boolean(request.headers.get("cf-ray") || request.headers.get("cf-connecting-ip"));
   const directPrivateRequest = !cameThroughCloudflare && isPrivateHostname(requestHostname(request));
-
   const { pathname, search } = request.nextUrl;
   if (isPublicAuthRoute(pathname)) return NextResponse.next();
   if (directPrivateRequest && !isAdminRoute(pathname)) return NextResponse.next();
-
   const username = process.env.AUTH_USERNAME ?? "";
   const password = process.env.AUTH_PASSWORD ?? "";
   const secret = process.env.AUTH_SECRET ?? "";
-  if (!username || !password || secret.length < 32) {
-    return new NextResponse("Public authentication is not fully configured.", { status: 503 });
-  }
+  if (!username || !password || secret.length < 32) return new NextResponse("Public authentication is not fully configured.", { status: 503 });
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
   const session = await verifySessionToken(token, secret);
   if (isOwnerOnlyRoute(pathname)) {
@@ -57,16 +51,8 @@ export async function proxy(request: NextRequest) {
     const loginUrl = new URL("/login", request.url); loginUrl.searchParams.set("next", pathname); return NextResponse.redirect(loginUrl);
   }
   if (session) return NextResponse.next();
-
-  if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
-
-  const loginUrl = new URL("/login", request.url);
-  loginUrl.searchParams.set("next", `${pathname}${search}`);
-  return NextResponse.redirect(loginUrl);
+  if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  const loginUrl = new URL("/login", request.url); loginUrl.searchParams.set("next", `${pathname}${search}`); return NextResponse.redirect(loginUrl);
 }
 
-export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
-};
+export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
