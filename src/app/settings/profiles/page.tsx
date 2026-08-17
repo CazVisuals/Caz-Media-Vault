@@ -3,94 +3,28 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
-type Profile = { id: string; username: string; displayName: string; role: "admin" | "family" | "kids" | "guest"; disabled: boolean; expiresAt: string | null; createdAt: string };
+type Role = "admin" | "family" | "kids" | "guest";
+type Profile = { id: string; username: string; displayName: string; role: Role; disabled: boolean; expiresAt: string | null; createdAt: string };
+type Invite = { id: string; role: Role; expiresAt: string | null; createdAt: string; acceptedAt: string | null; revokedAt: string | null; status: "pending" | "accepted" | "revoked" | "expired" };
 
 export default function ProfilesPage() {
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [role, setRole] = useState<Profile["role"]>("family");
+  const [profiles, setProfiles] = useState<Profile[]>([]); const [invites, setInvites] = useState<Invite[]>([]);
+  const [error, setError] = useState(""); const [busy, setBusy] = useState(false); const [role, setRole] = useState<Role>("family"); const [inviteRole, setInviteRole] = useState<Role>("family"); const [newInviteUrl, setNewInviteUrl] = useState("");
+  const load = useCallback(async () => { const [profileResponse, inviteResponse] = await Promise.all([fetch("/api/admin/profiles", { cache: "no-store" }), fetch("/api/admin/invites", { cache: "no-store" })]); const profileResult = await profileResponse.json(); const inviteResult = await inviteResponse.json(); if (!profileResponse.ok) throw new Error(profileResult.error || "Could not load profiles."); if (!inviteResponse.ok) throw new Error(inviteResult.error || "Could not load invites."); setProfiles(profileResult.profiles || []); setInvites(inviteResult.invites || []); }, []);
+  useEffect(() => { const timer = window.setTimeout(() => void load().catch((reason: Error) => setError(reason.message)), 0); return () => window.clearTimeout(timer); }, [load]);
+  async function create(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); const form = new FormData(event.currentTarget); try { const response = await fetch("/api/admin/profiles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "Could not create profile."); event.currentTarget.reset(); setRole("family"); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create profile."); } finally { setBusy(false); } }
+  async function createInvite(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); setNewInviteUrl(""); const form = new FormData(event.currentTarget); try { const response = await fetch("/api/admin/invites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "Could not create invite."); setNewInviteUrl(result.url); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create invite."); } finally { setBusy(false); } }
+  async function copyInvite() { if (!newInviteUrl) return; await navigator.clipboard.writeText(newInviteUrl); window.alert("Invite link copied."); }
+  async function shareInvite() { if (!newInviteUrl) return; if (navigator.share) await navigator.share({ title: "Constant's Media Vault invite", text: "You've been invited to Constant's Media Vault.", url: newInviteUrl }); else await copyInvite(); }
+  async function revokeInvite(id: string) { if (!window.confirm("Revoke this invite? The link will stop working immediately.")) return; const response = await fetch(`/api/admin/invites?id=${encodeURIComponent(id)}`, { method: "DELETE" }); const result = await response.json(); if (!response.ok) setError(result.error || "Could not revoke invite."); else await load(); }
+  async function change(profile: Profile, action: "toggle" | "delete") { const deleting = action === "delete"; if (deleting && !window.confirm(`Delete ${profile.displayName}? They will immediately lose access.`)) return; setError(""); const response = await fetch(deleting ? `/api/admin/profiles?id=${encodeURIComponent(profile.id)}` : "/api/admin/profiles", { method: deleting ? "DELETE" : "PATCH", headers: { "Content-Type": "application/json" }, body: deleting ? undefined : JSON.stringify({ id: profile.id, disabled: !profile.disabled }) }); const result = await response.json(); if (!response.ok) setError(result.error || "Could not update profile."); else await load(); }
+  async function resetPassword(profile: Profile) { const password = window.prompt(`Enter a new password for ${profile.displayName} (at least 8 characters):`); if (password === null) return; if (password.length < 8) { setError("Password must be at least 8 characters."); return; } const confirmed = window.prompt("Enter the new password again:"); if (confirmed !== password) { setError("The passwords did not match."); return; } const response = await fetch("/api/admin/profiles", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: profile.id, password }) }); const result = await response.json(); if (!response.ok) setError(result.error || "Could not reset password."); else window.alert(`${profile.displayName}'s password has been updated.`); }
+  async function changeRole(profile: Profile, nextRole: Role) { if (nextRole === profile.role) return; if (nextRole === "admin" && !window.confirm(`Make ${profile.displayName} an Admin? They will be able to organize media, manage posters and collections, and control conversions.`)) return; const response = await fetch("/api/admin/profiles", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: profile.id, role: nextRole }) }); const result = await response.json(); if (!response.ok) setError(result.error || "Could not change role."); else await load(); }
 
-  const load = useCallback(async () => {
-    const response = await fetch("/api/admin/profiles", { cache: "no-store" });
-    const result = await response.json() as { profiles?: Profile[]; error?: string };
-    if (!response.ok) throw new Error(result.error || "Could not load profiles.");
-    setProfiles(result.profiles || []);
-  }, []);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load().catch((reason: Error) => setError(reason.message)), 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
-
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
-    const form = new FormData(event.currentTarget);
-    try {
-      const response = await fetch("/api/admin/profiles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(form)) });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error || "Could not create profile.");
-      event.currentTarget.reset(); setRole("family"); await load();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create profile."); }
-    finally { setBusy(false); }
-  }
-
-  async function change(profile: Profile, action: "toggle" | "delete") {
-    const deleting = action === "delete";
-    if (deleting && !window.confirm(`Delete ${profile.displayName}? They will immediately lose access.`)) return;
-    setError("");
-    const response = await fetch(deleting ? `/api/admin/profiles?id=${encodeURIComponent(profile.id)}` : "/api/admin/profiles", {
-      method: deleting ? "DELETE" : "PATCH", headers: { "Content-Type": "application/json" },
-      body: deleting ? undefined : JSON.stringify({ id: profile.id, disabled: !profile.disabled }),
-    });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) setError(result.error || "Could not update profile."); else await load();
-  }
-
-  async function resetPassword(profile: Profile) {
-    const password = window.prompt(`Enter a new password for ${profile.displayName} (at least 8 characters):`);
-    if (password === null) return;
-    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
-    const confirmed = window.prompt("Enter the new password again:");
-    if (confirmed !== password) { setError("The passwords did not match."); return; }
-    setError("");
-    const response = await fetch("/api/admin/profiles", {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: profile.id, password }),
-    });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) setError(result.error || "Could not reset password.");
-    else window.alert(`${profile.displayName}'s password has been updated.`);
-  }
-
-  async function changeRole(profile: Profile, nextRole: Profile["role"]) {
-    if (nextRole === profile.role) return;
-    if (nextRole === "admin" && !window.confirm(`Make ${profile.displayName} an Admin? They will be able to organize media, manage posters and collections, and control conversions.`)) return;
-    setError("");
-    const response = await fetch("/api/admin/profiles", {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: profile.id, role: nextRole }),
-    });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) setError(result.error || "Could not change role."); else await load();
-  }
-
-  return <main className="admin-shell">
-    <header className="admin-header"><div><Link href="/settings">← System Status</Link><p className="eyebrow">OWNER ONLY</p><h1>Profiles</h1><p className="admin-copy">Create household logins here. Passwords and PINs are securely hashed and stored on your NAS.</p></div></header>
-    {error ? <div className="state-card error">{error}</div> : null}
-    <section className="admin-panel"><p className="eyebrow">NEW PROFILE</p><h2>Add someone</h2>
-      <form className="profile-form" onSubmit={create}>
-        <label><span>Display name</span><input name="displayName" required maxLength={40} placeholder="Lisa" /></label>
-        <label><span>Username</span><input name="username" required minLength={3} maxLength={32} autoCapitalize="none" placeholder="lisa" /></label>
-        <label><span>Password</span><input name="password" required minLength={8} type="password" autoComplete="new-password" /></label>
-        <label><span>Profile type</span><select name="role" value={role} onChange={(event) => setRole(event.target.value as Profile["role"])}><option value="family">Family</option><option value="admin">Admin</option><option value="kids">Kids</option><option value="guest">Guest</option></select></label>
-        {role === "kids" ? <label><span>Parent PIN (optional)</span><input name="pin" inputMode="numeric" pattern="[0-9]{4,8}" type="password" placeholder="4–8 digits" /></label> : null}
-        {role === "guest" ? <label><span>Expires</span><input name="expiresAt" required type="datetime-local" /></label> : null}
-        <button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create profile"}</button>
-      </form>
-    </section>
-    <section className="admin-panel"><p className="eyebrow">HOUSEHOLD ACCESS</p><h2>Managed profiles</h2>
-      <div className="profile-list">{profiles.length ? profiles.map((profile) => <article className="profile-row" key={profile.id}><div className={`profile-avatar role-${profile.role}`}>{profile.displayName.slice(0, 1).toUpperCase()}</div><div><strong>{profile.displayName}</strong><span>@{profile.username} · {profile.role}{profile.expiresAt ? ` · expires ${new Date(profile.expiresAt).toLocaleString()}` : ""}</span></div><div className="profile-actions"><label className="profile-role-control"><span className="sr-only">Role for {profile.displayName}</span><select value={profile.role} onChange={(event) => void changeRole(profile, event.target.value as Profile["role"])}><option value="family">Family</option><option value="admin">Admin</option><option value="kids">Kids</option><option value="guest">Guest</option></select></label><button className="secondary-button" onClick={() => void resetPassword(profile)}>Reset password</button><button className="secondary-button" onClick={() => void change(profile, "toggle")}>{profile.disabled ? "Enable" : "Disable"}</button><button className="danger-button" onClick={() => void change(profile, "delete")}>Delete</button></div></article>) : <p className="admin-copy">No extra profiles yet. Your environment login is the Owner account.</p>}</div>
-    </section>
+  return <main className="admin-shell"><header className="admin-header"><div><Link href="/settings">← System Status</Link><p className="eyebrow">OWNER ONLY</p><h1>Profiles & Invites</h1><p className="admin-copy">Create accounts yourself or send a secure one-time invite so someone can choose their own login.</p></div></header>{error ? <div className="state-card error">{error}</div> : null}
+    <section className="admin-panel"><p className="eyebrow">SEND INVITE</p><h2>Invite someone</h2><p className="admin-copy">No email service required. Generate a private link and send it by text, Messages, email, or any app you choose.</p><form className="profile-form" onSubmit={createInvite}><label><span>Profile type</span><select name="role" value={inviteRole} onChange={(event) => setInviteRole(event.target.value as Role)}><option value="family">Family</option><option value="admin">Admin</option><option value="kids">Kids</option><option value="guest">Guest</option></select></label><label><span>Invite expires (optional)</span><input name="expiresAt" type="datetime-local" /></label><button className="primary-button" disabled={busy}>{busy ? "Generating…" : "Generate invite link"}</button></form>{newInviteUrl ? <div className="state-card"><strong>Invite ready</strong><p className="admin-copy" style={{overflowWrap:"anywhere"}}>{newInviteUrl}</p><div className="profile-actions"><button className="primary-button" onClick={() => void shareInvite()}>Share invite</button><button className="secondary-button" onClick={() => void copyInvite()}>Copy link</button></div></div> : null}</section>
+    <section className="admin-panel"><p className="eyebrow">PENDING INVITES</p><h2>Invite history</h2><div className="profile-list">{invites.length ? invites.map((invite) => <article className="profile-row" key={invite.id}><div className={`profile-avatar role-${invite.role}`}>{invite.role.slice(0,1).toUpperCase()}</div><div><strong>{invite.role[0].toUpperCase()+invite.role.slice(1)} invite</strong><span>{invite.status} · created {new Date(invite.createdAt).toLocaleString()}{invite.expiresAt ? ` · expires ${new Date(invite.expiresAt).toLocaleString()}` : ""}</span></div><div className="profile-actions">{invite.status === "pending" ? <button className="danger-button" onClick={() => void revokeInvite(invite.id)}>Revoke</button> : null}</div></article>) : <p className="admin-copy">No invites yet.</p>}</div></section>
+    <section className="admin-panel"><p className="eyebrow">NEW PROFILE</p><h2>Create account yourself</h2><form className="profile-form" onSubmit={create}><label><span>Display name</span><input name="displayName" required maxLength={40} placeholder="Lisa" /></label><label><span>Username</span><input name="username" required minLength={3} maxLength={32} autoCapitalize="none" placeholder="lisa" /></label><label><span>Password</span><input name="password" required minLength={8} type="password" autoComplete="new-password" /></label><label><span>Profile type</span><select name="role" value={role} onChange={(event) => setRole(event.target.value as Role)}><option value="family">Family</option><option value="admin">Admin</option><option value="kids">Kids</option><option value="guest">Guest</option></select></label>{role === "kids" ? <label><span>Parent PIN (optional)</span><input name="pin" inputMode="numeric" pattern="[0-9]{4,8}" type="password" placeholder="4–8 digits" /></label> : null}{role === "guest" ? <label><span>Expires</span><input name="expiresAt" required type="datetime-local" /></label> : null}<button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create profile"}</button></form></section>
+    <section className="admin-panel"><p className="eyebrow">HOUSEHOLD ACCESS</p><h2>Managed profiles</h2><div className="profile-list">{profiles.length ? profiles.map((profile) => <article className="profile-row" key={profile.id}><div className={`profile-avatar role-${profile.role}`}>{profile.displayName.slice(0, 1).toUpperCase()}</div><div><strong>{profile.displayName}</strong><span>@{profile.username} · {profile.role}{profile.expiresAt ? ` · expires ${new Date(profile.expiresAt).toLocaleString()}` : ""}</span></div><div className="profile-actions"><label className="profile-role-control"><span className="sr-only">Role for {profile.displayName}</span><select value={profile.role} onChange={(event) => void changeRole(profile, event.target.value as Role)}><option value="family">Family</option><option value="admin">Admin</option><option value="kids">Kids</option><option value="guest">Guest</option></select></label><button className="secondary-button" onClick={() => void resetPassword(profile)}>Reset password</button><button className="secondary-button" onClick={() => void change(profile, "toggle")}>{profile.disabled ? "Enable" : "Disable"}</button><button className="danger-button" onClick={() => void change(profile, "delete")}>Delete</button></div></article>) : <p className="admin-copy">No extra profiles yet. Your environment login is the Owner account.</p>}</div></section>
   </main>;
 }
