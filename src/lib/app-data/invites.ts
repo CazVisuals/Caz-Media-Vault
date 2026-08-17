@@ -53,8 +53,15 @@ function status(invite: Invite): InviteStatus {
   return "pending";
 }
 function publicInvite(invite: Invite): PublicInvite {
-  const { tokenHash: _tokenHash, ...safe } = invite;
-  return { ...safe, status: status(invite) };
+  return {
+    id: invite.id,
+    role: invite.role,
+    expiresAt: invite.expiresAt,
+    createdAt: invite.createdAt,
+    acceptedAt: invite.acceptedAt,
+    revokedAt: invite.revokedAt,
+    status: status(invite),
+  };
 }
 
 export async function listInvites() {
