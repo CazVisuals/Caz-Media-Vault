@@ -19,11 +19,12 @@ export default function TvHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [owner, setOwner] = useState(false);
+  const [profile, setProfile] = useState<{ displayName?: string; role?: string } | null>(null);
   const [profileState, setProfileState] = useState<{ progress: { mediaId: string; seconds: number; updatedAt: string; completed: boolean }[]; watchlist: string[] }>({ progress: [], watchlist: [] });
   const [customCollections, setCustomCollections] = useState<Record<string, string[]>>({});
   const [hiddenCollections, setHiddenCollections] = useState<string[]>([]);
   useTvNavigation();
-  useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { profile?: { role?: string } | null }) => setOwner(result.profile?.role === "owner")).catch(() => setOwner(false)); }, []);
+  useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { profile?: { displayName?: string; role?: string } | null }) => { setProfile(result.profile || null); setOwner(result.profile?.role === "owner"); }).catch(() => setOwner(false)); }, []);
   useEffect(() => { void fetch("/api/user/state", { cache: "no-store" }).then((response) => response.json()).then((result) => setProfileState({ progress: result.progress || [], watchlist: result.watchlist || [] })).catch(() => undefined); }, []);
   useEffect(() => { void fetch("/api/media/collections", { cache: "no-store" }).then((response) => response.json()).then((result: { collections?: Record<string, string[]>; hiddenCollections?: string[] }) => { setCustomCollections(result.collections || {}); setHiddenCollections(result.hiddenCollections || []); }).catch(() => undefined); }, []);
 
@@ -85,6 +86,13 @@ export default function TvHome() {
     const watchedGenres = new Set(movies.filter((movie) => watchedIds.has(movie.id)).flatMap((movie) => movie.genres));
     return movieItems.filter((movie) => !watchedIds.has(movie.id) && movie.genres.some((genre) => watchedGenres.has(genre))).sort((a, b) => (b.rating || 0) - (a.rating || 0));
   })();
+  const moods = [
+    { name: "Family Night", icon: "✦", movies: movieItems.filter((movie) => movie.isKids) },
+    { name: "Big Adventure", icon: "◈", movies: movieItems.filter((movie) => movie.genres.some((genre) => /action|adventure|sci-fi|fantasy/i.test(genre))) },
+    { name: "Laugh Out Loud", icon: "☺", movies: movieItems.filter((movie) => movie.genres.some((genre) => /comedy/i.test(genre))) },
+    { name: "Short & Sweet", icon: "◷", movies: movieItems.filter((movie) => movie.runtimeMinutes && movie.runtimeMinutes <= 105) },
+    { name: "Dark & Intense", icon: "◐", movies: movieItems.filter((movie) => movie.genres.some((genre) => /horror|thriller|crime|mystery/i.test(genre))) },
+  ].filter((mood) => mood.movies.length);
 
   return (
     <main className="tv-shell">
@@ -97,6 +105,7 @@ export default function TvHome() {
       <FeaturedHero movies={movies} />
 
       <section className="content-area">
+        <section className="welcome-strip"><div><p className="eyebrow">WELCOME BACK</p><h2>{profile?.displayName ? `${profile.displayName}’s cinema` : "Your private cinema"}</h2><p>Pick up where you left off or set the mood for tonight.</p></div><div className="experience-actions"><Link href="/tv/cinema-night" className="secondary-button focusable" data-focusable="true">✦ Cinema Night</Link><Link href="/tv/ambient" className="secondary-button focusable" data-focusable="true">◌ Ambient Mode</Link></div></section>
         <div className="library-tools"><label className="search-wrap"><span>Search library</span><input data-focusable="true" className="focusable" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, year, or genre…" /></label><button className="secondary-button focusable" data-focusable="true" onClick={() => void fetch("/api/media/surprise", { cache: "no-store" }).then((response) => response.json()).then((result: { id?: string }) => { if (result.id) router.push(`/tv/movie/${result.id}`); })}>🎲 Surprise Me</button></div>
         {loading ? <div className="state-card">Scanning your media vault…</div> : null}
         {error ? <div className="state-card error">{error}<small>Confirm MEDIA_ROOT points to your mounted NAS.</small></div> : null}
@@ -104,6 +113,7 @@ export default function TvHome() {
         {!query && continueWatching.length ? <MovieRow title="Continue Watching" movies={continueWatching.slice(0, 12)} /> : null}
         {!query && myList.length ? <MovieRow title="My List" movies={myList.slice(0, 12)} /> : null}
         {!query && recommended.length ? <MovieRow title="Recommended For You" movies={recommended.slice(0, 12)} /> : null}
+        {!query && moods.map((mood) => <MovieRow key={mood.name} title={`${mood.icon} ${mood.name}`} movies={mood.movies.slice(0, 12)} view="movies" />)}
         {recent.length ? <MovieRow id="recent" title={query ? "Search Results" : "Recently Added"} movies={(query ? filtered : recent).slice(0, 12)} view="recent" /> : null}
         {!query && showGroups.length ? <ShowRow id="shows" shows={showGroups} /> : null}
         {!query && kids.length ? <MovieRow id="kids" title="Kids & Family" movies={kids.slice(0, 12)} view="kids" /> : null}

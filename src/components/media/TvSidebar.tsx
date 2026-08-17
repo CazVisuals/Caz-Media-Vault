@@ -11,6 +11,8 @@ const links = [
   { href: "/tv/browse?view=kids", icon: "★", label: "Kids & Family" },
   { href: "/tv/browse?view=movies", icon: "▶", label: "Movies" },
   { href: "/tv/collections", icon: "◆", label: "Collections" },
+  { href: "/tv/cinema-night", icon: "✦", label: "Cinema Night" },
+  { href: "/tv/ambient", icon: "◌", label: "Ambient Mode" },
 ];
 
 export function TvSidebar() {
