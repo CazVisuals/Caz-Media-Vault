@@ -1,11 +1,13 @@
 param(
   [switch]$RunNow,
+  [switch]$ForceWhenBusy,
   [switch]$Once,
   [string]$MediaRoot = "\\192.168.0.15\video",
   [string]$WorkRoot = "D:\ConstantsHub-Transcode",
   [int]$StartHour = 0,
   [int]$EndHour = 7,
-  [int]$IdleMinutes = 15
+  [int]$IdleMinutes = 15,
+  [int]$GpuBusyThreshold = 35
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,6 +48,14 @@ public static class IdleTime {
   return [IdleTime]::Seconds()
 }
 
+function Get-GpuUtilization {
+  try {
+    $value = & nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>$null | Select-Object -First 1
+    if ($LASTEXITCODE -ne 0) { return 0 }
+    return [int]($value.Trim())
+  } catch { return 0 }
+}
+
 function In-Schedule {
   $hour = (Get-Date).Hour
   if ($StartHour -lt $EndHour) { return $hour -ge $StartHour -and $hour -lt $EndHour }
@@ -81,10 +91,14 @@ function Test-Output([string]$Path) {
 function Get-Candidates {
   Get-ChildItem -LiteralPath $MediaRoot -Recurse -File -ErrorAction SilentlyContinue |
     Where-Object {
-      $VideoExtensions -contains $_.Extension.ToLowerInvariant() -and
-      $_.FullName -notlike "$MediaRoot\.constants-hub\*" -and
-      $_.Name -notlike '* - NVENC TEST.mp4' -and
-      $_.Name -notlike '* - NVENC LOCAL TEST.mp4'
+      if ($VideoExtensions -notcontains $_.Extension.ToLowerInvariant()) { return $false }
+      if ($_.FullName -like "$MediaRoot\.constants-hub\*") { return $false }
+      if ($_.Name -like '* - NVENC TEST.mp4' -or $_.Name -like '* - NVENC LOCAL TEST.mp4') { return $false }
+      if ($_.Extension.ToLowerInvariant() -ne '.mp4') {
+        $sameNameMp4 = Join-Path $_.DirectoryName (([IO.Path]::GetFileNameWithoutExtension($_.Name)) + '.mp4')
+        if (Test-Path -LiteralPath $sameNameMp4) { return $false }
+      }
+      return $true
     } |
     Sort-Object LastWriteTime
 }
@@ -105,7 +119,6 @@ function Convert-One([IO.FileInfo]$File) {
   New-Item -ItemType Directory -Force $archiveDir | Out-Null
 
   if (Test-Path -LiteralPath $dest) {
-    Write-Log "SKIP destination already exists: $dest"
     Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     return $false
   }
@@ -113,16 +126,12 @@ function Convert-One([IO.FileInfo]$File) {
   Save-State @{ status='converting'; source=$File.FullName; mode=$mode; temp=$tempOutput; output=$dest }
   Write-Log "START [$mode] $($File.FullName)"
 
-  $common = @('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn')
-  switch ($mode) {
-    'remux' { $codec = @('-c:v','copy','-c:a','copy') }
-    'audio' { $codec = @('-c:v','copy','-c:a','aac','-b:a','192k') }
-    default { $codec = @('-hwaccel','cuda','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k') }
-  }
   if ($mode -eq 'transcode') {
-    $args = @('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn') + $codec[2..($codec.Length-1)] + @('-movflags','+faststart',$tempOutput)
+    $args = @('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)
+  } elseif ($mode -eq 'audio') {
+    $args = @('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)
   } else {
-    $args = $common + $codec + @('-movflags','+faststart',$tempOutput)
+    $args = @('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','copy','-movflags','+faststart',$tempOutput)
   }
 
   & ffmpeg @args
@@ -142,12 +151,21 @@ function Convert-One([IO.FileInfo]$File) {
   return $true
 }
 
-Write-Log "Worker starting. RunNow=$RunNow Once=$Once MediaRoot=$MediaRoot WorkRoot=$WorkRoot"
+Write-Log "Worker starting. RunNow=$RunNow ForceWhenBusy=$ForceWhenBusy Once=$Once MediaRoot=$MediaRoot WorkRoot=$WorkRoot"
 Save-State @{ status='idle'; source=$null }
 
 while ($true) {
   if (Test-Path -LiteralPath $StopFile) { Write-Log 'STOP file detected. Exiting.'; Save-State @{status='stopped'}; break }
   if (Test-Path -LiteralPath $PauseFile) { Save-State @{status='paused'}; Start-Sleep -Seconds 30; continue }
+
+  $gpu = Get-GpuUtilization
+  if (!$ForceWhenBusy -and $gpu -ge $GpuBusyThreshold) {
+    Save-State @{status='waiting'; reason="GPU busy at $gpu%"}
+    if ($Once) { break }
+    Start-Sleep -Seconds 60
+    continue
+  }
+
   if (!$RunNow) {
     if (!(In-Schedule)) { Save-State @{status='waiting'; reason='outside schedule'}; if ($Once) { break }; Start-Sleep -Seconds 60; continue }
     if ((Get-IdleSeconds) -lt ($IdleMinutes * 60)) { Save-State @{status='waiting'; reason='PC active'}; if ($Once) { break }; Start-Sleep -Seconds 60; continue }
