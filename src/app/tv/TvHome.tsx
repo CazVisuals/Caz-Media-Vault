@@ -8,6 +8,7 @@ import { ShowCard } from "@/components/media/ShowCard";
 import { TvSidebar } from "@/components/media/TvSidebar";
 import { FeaturedHero } from "@/components/media/FeaturedHero";
 import { useTvNavigation } from "@/components/media/useTvNavigation";
+import { buildCollections } from "@/lib/media/collections";
 import type { LibraryResponse, Movie } from "@/lib/media/types";
 
 export default function TvHome() {
@@ -20,10 +21,11 @@ export default function TvHome() {
   const [owner, setOwner] = useState(false);
   const [profileState, setProfileState] = useState<{ progress: { mediaId: string; seconds: number; updatedAt: string; completed: boolean }[]; watchlist: string[] }>({ progress: [], watchlist: [] });
   const [customCollections, setCustomCollections] = useState<Record<string, string[]>>({});
+  const [hiddenCollections, setHiddenCollections] = useState<string[]>([]);
   useTvNavigation();
   useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { profile?: { role?: string } | null }) => setOwner(result.profile?.role === "owner")).catch(() => setOwner(false)); }, []);
   useEffect(() => { void fetch("/api/user/state", { cache: "no-store" }).then((response) => response.json()).then((result) => setProfileState({ progress: result.progress || [], watchlist: result.watchlist || [] })).catch(() => undefined); }, []);
-  useEffect(() => { void fetch("/api/media/collections", { cache: "no-store" }).then((response) => response.json()).then((result: { collections?: Record<string, string[]> }) => setCustomCollections(result.collections || {})).catch(() => undefined); }, []);
+  useEffect(() => { void fetch("/api/media/collections", { cache: "no-store" }).then((response) => response.json()).then((result: { collections?: Record<string, string[]>; hiddenCollections?: string[] }) => { setCustomCollections(result.collections || {}); setHiddenCollections(result.hiddenCollections || []); }).catch(() => undefined); }, []);
 
   useEffect(() => {
     let active = true;
@@ -78,28 +80,7 @@ export default function TvHome() {
   const continueWatching = profileState.progress.filter((item) => item.seconds > 30 && !item.completed).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((item) => movies.find((movie) => movie.id === item.mediaId)).filter((movie): movie is Movie => Boolean(movie));
   const myList = profileState.watchlist.map((id) => movies.find((movie) => movie.id === id)).filter((movie): movie is Movie => Boolean(movie));
   const watchedIds = new Set(profileState.progress.filter((item) => item.completed).map((item) => item.mediaId));
-  const collections = (() => {
-    const groups = new Map<string, Movie[]>();
-    const inferred = (movie: Movie) => {
-      const searchable = `${movie.title} ${movie.collection || ""}`;
-      const names = new Set<string>();
-      if (movie.collection) names.add(movie.collection);
-      if (/star[\s-]*wars/i.test(searchable)) names.add("Star Wars");
-      if (/james bond|\b007\b/i.test(searchable)) names.add("James Bond");
-      if (/lord of the rings|\bhobbit\b|middle[\s-]*earth/i.test(searchable)) names.add("Middle-earth");
-      if (/spider[\s-]*man|spider[\s-]*verse|venom|avengers|iron[\s-]*man|captain america|captain marvel|thor|black panther|guardians of the galaxy|doctor strange|ant[\s-]*man|deadpool|wolverine|\bx[\s-]*men\b|fantastic four|marvel/i.test(searchable)) names.add("Marvel");
-      if (/christmas|holiday|santa/i.test(searchable)) names.add("Holiday");
-      return [...names];
-    };
-    for (const movie of movieItems) {
-      for (const name of inferred(movie)) {
-        const items = groups.get(name) || [];
-        if (!items.some((item) => item.id === movie.id)) groups.set(name, [...items, movie]);
-      }
-    }
-    for (const [name, ids] of Object.entries(customCollections)) { const items = ids.map((id) => movieItems.find((movie) => movie.id === id)).filter((movie): movie is Movie => Boolean(movie)); if (items.length) groups.set(name, items); }
-    return Array.from(groups.entries()).filter(([, items]) => items.length > 0);
-  })();
+  const collections = buildCollections(movieItems, customCollections, hiddenCollections);
   const recommended = (() => {
     const watchedGenres = new Set(movies.filter((movie) => watchedIds.has(movie.id)).flatMap((movie) => movie.genres));
     return movieItems.filter((movie) => !watchedIds.has(movie.id) && movie.genres.some((genre) => watchedGenres.has(genre))).sort((a, b) => (b.rating || 0) - (a.rating || 0));
@@ -126,7 +107,7 @@ export default function TvHome() {
         {recent.length ? <MovieRow id="recent" title={query ? "Search Results" : "Recently Added"} movies={(query ? filtered : recent).slice(0, 12)} view="recent" /> : null}
         {!query && showGroups.length ? <ShowRow id="shows" shows={showGroups} /> : null}
         {!query && kids.length ? <MovieRow id="kids" title="Kids & Family" movies={kids.slice(0, 12)} view="kids" /> : null}
-        {!query && collections.map(([name, items]) => <MovieRow key={name} title={`${name} Collection`} movies={items.slice(0, 12)} />)}
+        {!query && collections.slice(0, 8).map((collection) => <MovieRow key={collection.name} title={`${collection.name} Collection`} movies={collection.movies.slice(0, 12)} href={`/tv/collections?name=${encodeURIComponent(collection.name)}`} />)}
         {!query && genres.filter((genre) => !["kids", "kids & family", "tv shows"].includes(genre.toLowerCase())).slice(0, 5).map((genre) => <MovieRow key={genre} title={genre} movies={movieItems.filter((movie) => movie.genres.includes(genre)).slice(0, 12)} view="movies" />)}
         {!query && movieItems.length ? <MovieRow id="movies" title="All Movies" movies={movieItems.slice(0, 12)} view="movies" /> : null}
       </section>
@@ -134,9 +115,9 @@ export default function TvHome() {
   );
 }
 
-function MovieRow({ id, title, movies, view }: { id?: string; title: string; movies: Movie[]; view?: string }) {
+function MovieRow({ id, title, movies, view, href }: { id?: string; title: string; movies: Movie[]; view?: string; href?: string }) {
   if (!movies.length) return null;
-  return <section className="movie-row" id={id}><div className="row-heading"><h2>{title}</h2>{view ? <Link href={`/tv/browse?view=${view}`} className="view-all focusable" data-focusable="true">View all →</Link> : null}</div><div className="card-rail">{movies.map((movie) => <MediaCard key={movie.id} movie={movie} />)}</div></section>;
+  return <section className="movie-row" id={id}><div className="row-heading"><h2>{title}</h2>{view || href ? <Link href={href || `/tv/browse?view=${view}`} className="view-all focusable" data-focusable="true">View all →</Link> : null}</div><div className="card-rail">{movies.map((movie) => <MediaCard key={movie.id} movie={movie} />)}</div></section>;
 }
 
 function ShowRow({ id, shows }: { id: string; shows: { show: Movie; episodeCount: number }[] }) {
