@@ -31,7 +31,7 @@ export function MediaCard({ movie }: { movie: Movie }) {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {movie.posterUrl ? <img src={movie.posterUrl} alt="" className="poster" /> : <div className="poster-fallback"><span>CH</span></div>}
             <div className="netflix-poster-shade" />
-            <span className="netflix-play-circle" aria-hidden="true">▶</span>
+            <span className="netflix-play-circle" aria-hidden="true"><span className="netflix-play-triangle" /></span>
           </Link>
           {movie.rating !== null ? <span className="rating">★ {movie.rating.toFixed(1)}</span> : null}
           <div className="netflix-card-footer">
@@ -51,7 +51,7 @@ export function MediaCard({ movie }: { movie: Movie }) {
           </header>
           <div className="netflix-sheet-actions">
             <Link href={detailHref} className="netflix-sheet-action" onClick={() => setMenuOpen(false)}><span aria-hidden="true">ⓘ</span><strong>{movie.mediaType === "tv" ? "Episodes and Info" : "Movie Info"}</strong></Link>
-            <Link href={`/tv/watch/${movie.id}`} className="netflix-sheet-action" onClick={() => setMenuOpen(false)}><span aria-hidden="true">▶</span><strong>Play</strong></Link>
+            <Link href={`/tv/watch/${movie.id}`} className="netflix-sheet-action" onClick={() => setMenuOpen(false)}><span aria-hidden="true" className="netflix-sheet-play-icon"><span className="netflix-play-triangle" /></span><strong>Play</strong></Link>
             <div className="netflix-sheet-action netflix-download-action"><span aria-hidden="true">↓</span><strong>Download</strong><OfflineDownloadButton movie={movie} compact /></div>
           </div>
         </section>
