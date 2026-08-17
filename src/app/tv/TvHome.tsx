@@ -118,7 +118,7 @@ export default function TvHome() {
         {recent.length ? <MovieRow id="recent" title={query ? "Search Results" : "Recently Added"} movies={(query ? filtered : recent).slice(0, 12)} view="recent" /> : null}
         {!query && showGroups.length ? <ShowRow id="shows" shows={showGroups} /> : null}
         {!query && kids.length ? <MovieRow id="kids" title="Kids & Family" movies={kids.slice(0, 12)} view="kids" /> : null}
-        {!query && collections.slice(0, 8).map((collection) => <MovieRow key={collection.name} title={`${collection.name} Collection`} movies={collection.movies.slice(0, 12)} href={`/tv/collections?name=${encodeURIComponent(collection.name)}`} />)}
+        {!query && collections.map((collection) => <MovieRow key={collection.name} title={`${collection.name} Collection`} movies={collection.movies.slice(0, 12)} href={`/tv/collections?name=${encodeURIComponent(collection.name)}`} />)}
         {!query && genres.filter((genre) => !["kids", "kids & family", "tv shows"].includes(genre.toLowerCase())).slice(0, 5).map((genre) => <MovieRow key={genre} title={genre} movies={movieItems.filter((movie) => movie.genres.includes(genre)).slice(0, 12)} view="movies" />)}
         {!query && movieItems.length ? <MovieRow id="movies" title="All Movies" movies={movieItems.slice(0, 12)} view="movies" /> : null}
       </section>
