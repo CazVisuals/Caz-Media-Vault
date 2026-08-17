@@ -23,6 +23,10 @@ export default function Player({ id }: { id: string }) {
   const [castAvailable, setCastAvailable] = useState(false);
   const [offlineDownload, setOfflineDownload] = useState<OfflineDownload | null>(null);
   const [sourceReady, setSourceReady] = useState(false);
+  const [autoSkip, setAutoSkip] = useState(false);
+  const [showSkipRecap, setShowSkipRecap] = useState(false);
+  const [showSkipIntro, setShowSkipIntro] = useState(false);
+  const autoSkipApplied = useRef(false);
   useEffect(() => { const video = videoRef.current as (HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; remote?: { prompt: () => Promise<void> } }) | null; setCastAvailable(Boolean(video?.webkitShowPlaybackTargetPicker || video?.remote?.prompt)); }, [sourceReady]);
 
   useEffect(() => {
@@ -39,6 +43,12 @@ export default function Player({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => {
+    const initial = window.setTimeout(() => setAutoSkip(localStorage.getItem("constants-hub-auto-skip") === "true"), 0);
+    return () => window.clearTimeout(initial);
+  }, []);
+  useEffect(() => { autoSkipApplied.current = false; }, [id]);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     let remote = 0;
@@ -51,16 +61,28 @@ export default function Player({ id }: { id: string }) {
       if (force || Date.now() - lastSync > 12_000) { lastSync = Date.now(); void fetch("/api/user/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "progress", mediaId: id, seconds: video.currentTime, duration: video.duration }) }).catch(() => undefined); }
     };
     video.addEventListener("loadedmetadata", restore);
-    const onTimeUpdate = () => { save(false); setShowUpNext(Boolean(movie?.mediaType === "tv" && video.duration > 0 && video.duration - video.currentTime <= 60)); };
+    const onTimeUpdate = () => {
+      save(false);
+      const isEpisode = movie?.mediaType === "tv";
+      setShowSkipRecap(Boolean(isEpisode && video.currentTime >= 3 && video.currentTime < 75));
+      setShowSkipIntro(Boolean(isEpisode && video.currentTime >= 75 && video.currentTime < 240));
+      if (isEpisode && autoSkip && !autoSkipApplied.current && video.currentTime >= 3 && video.currentTime < 20) {
+        autoSkipApplied.current = true;
+        video.currentTime = Math.min(150, Math.max(0, video.duration - 5));
+      }
+      setShowUpNext(Boolean(isEpisode && video.duration > 0 && video.duration - video.currentTime <= 60));
+    };
     const onEnded = () => { save(true); const next = episodes[episodes.findIndex((item) => item.id === id) + 1]; if (next) router.replace(`/tv/watch/${next.id}`); };
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("ended", onEnded);
     video.focus();
     return () => { save(true); video.removeEventListener("loadedmetadata", restore); video.removeEventListener("timeupdate", onTimeUpdate); video.removeEventListener("ended", onEnded); };
-  }, [episodes, id, movie?.mediaType, router, sourceReady]);
+  }, [autoSkip, episodes, id, movie?.mediaType, router, sourceReady]);
 
   const nextEpisode = useMemo(() => episodes[episodes.findIndex((item) => item.id === id) + 1] || null, [episodes, id]);
   async function cast() { const video = videoRef.current as (HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; remote?: { prompt: () => Promise<void> } }) | null; if (video?.webkitShowPlaybackTargetPicker) video.webkitShowPlaybackTargetPicker(); else await video?.remote?.prompt().catch(() => undefined); }
+  function skip(seconds: number) { const video = videoRef.current; if (video) video.currentTime = Math.min(video.duration || Number.POSITIVE_INFINITY, video.currentTime + seconds); }
+  function toggleAutoSkip() { setAutoSkip((current) => { const next = !current; localStorage.setItem("constants-hub-auto-skip", String(next)); return next; }); }
 
   const warning = movie ? compatibility(movie.fileName) : null;
   return <main className="player-shell">
@@ -71,6 +93,11 @@ export default function Player({ id }: { id: string }) {
       <track kind="subtitles" src={`/api/media/subtitles/${id}`} srcLang="en" label="English" />
     </video> : <div className="player-loading">Preparing player…</div>}
     {offlineDownload ? <span className="player-offline-badge">✓ Playing offline copy</span> : null}
+    {movie?.mediaType === "tv" ? <div className="skip-controls">
+      {showSkipRecap ? <button className="skip-button" onClick={() => skip(60)}>Skip Recap <span>+60s</span></button> : null}
+      {showSkipIntro ? <button className="skip-button" onClick={() => skip(90)}>Skip Intro <span>+90s</span></button> : null}
+      <button className={`auto-skip-button${autoSkip ? " active" : ""}`} aria-pressed={autoSkip} onClick={toggleAutoSkip}>{autoSkip ? "✓ Auto-skip on" : "Auto-skip off"}</button>
+    </div> : null}
     {showUpNext && nextEpisode ? <aside className="up-next"><small>UP NEXT</small><strong>{nextEpisode.title}</strong><div><button className="primary-button" onClick={() => router.replace(`/tv/watch/${nextEpisode.id}`)}>Play now</button><button className="secondary-button" onClick={() => setShowUpNext(false)}>Dismiss</button></div></aside> : null}
     {warning || playbackError ? <aside className="player-notice" role="alert"><strong>{playbackError ? "Playback unavailable" : "Mobile compatibility"}</strong><p>{playbackError || warning}</p><small>Original file: {movie?.fileName || "Loading…"}</small></aside> : null}
   </main>;

@@ -226,6 +226,12 @@ button, input { font: inherit; }
 .offline-player-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .8rem; }
 .offline-player-heading h2 { margin: .2rem 0 0; }
 .offline-player video { display: block; width: 100%; max-height: 72vh; background: #000; border-radius: .75rem; }
+.skip-controls { position: fixed; right: clamp(1rem, 4vw, 4rem); bottom: clamp(5rem, 11vh, 8rem); z-index: 12; display: flex; align-items: center; gap: .65rem; }
+.skip-button, .auto-skip-button { min-height: 48px; padding: .75rem 1rem; color: #fff; background: #090d14d9; border: 1px solid #ffffff35; border-radius: 999px; font: inherit; font-weight: 800; backdrop-filter: blur(14px); box-shadow: 0 12px 35px #0008; cursor: pointer; }
+.skip-button:hover, .skip-button:focus-visible, .auto-skip-button:hover, .auto-skip-button:focus-visible { border-color: #fff; background: #fff; color: #05070a; transform: translateY(-2px); }
+.skip-button span { margin-left: .35rem; color: #a9b4c6; font-size: .78em; }.skip-button:hover span, .skip-button:focus-visible span { color: #4b5563; }
+.auto-skip-button.active { color: #c4b5fd; border-color: #8b5cf6; }
+@media (max-width: 700px) { .skip-controls { right: .75rem; bottom: 5.25rem; flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 1.5rem); } .skip-button, .auto-skip-button { min-height: 44px; padding: .65rem .8rem; font-size: .82rem; } }
 
 @media (max-width: 700px) { .offline-storage-card { grid-template-columns: 1fr; } .offline-grid { grid-template-columns: 1fr; } .offline-card { grid-template-columns: 90px 1fr; } .offline-card > img, .offline-poster-fallback { width: 90px; height: 135px; } .player-download { top: auto; right: 1rem; bottom: 4.5rem; } .browse-header { align-items: stretch; flex-direction: column; } }
 .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 1.5rem; background: radial-gradient(circle at 20% 5%, #513a9d55, transparent 34%), radial-gradient(circle at 85% 85%, #1b518744, transparent 34%), #05070b; }
