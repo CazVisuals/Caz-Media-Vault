@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env*
+!.env.example
+npm-debug.log*
+README.md
+
+# Synology DSM indexing metadata. Inside src/app, Next.js would interpret
+# @eaDir as an App Router parallel-route slot and fail the production build.
+**/@eaDir
+**/@eaDir/**
