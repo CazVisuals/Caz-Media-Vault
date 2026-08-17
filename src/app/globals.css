@@ -72,9 +72,12 @@ button, input { font: inherit; }
 .row-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.15rem; }
 .row-heading h2 { margin: 0; }
 .view-all { padding: .65rem .8rem; color: #b9adff; border-radius: .6rem; font-weight: 700; white-space: nowrap; }
+.view-all:hover, .view-all:focus { color: #fff; background: #ffffff0d; }
 .card-rail { display: flex; gap: 1.15rem; overflow-x: auto; overflow-y: hidden; padding: .35rem .25rem 1.2rem; scrollbar-width: none; }
 .card-rail::-webkit-scrollbar { display: none; }
 .media-card { flex: 0 0 clamp(154px, 17vw, 245px); display: block; padding: .2rem; border-radius: 1rem; outline: none; transition: transform .18s ease, background .18s ease; }
+.media-card:hover { transform: translateY(-6px) scale(1.015); }
+.media-card:hover .poster-shell { box-shadow: 0 22px 55px #000c, 0 0 0 1px #ffffff24; }
 .poster-shell { position: relative; aspect-ratio: 2/3; overflow: hidden; margin-bottom: .85rem; border-radius: .9rem; background: #151a25; box-shadow: 0 18px 45px #0008; }
 .poster { width: 100%; height: 100%; object-fit: cover; }
 .poster-fallback { height: 100%; display: grid; place-items: center; background: linear-gradient(145deg, #26204b, #10141d 60%, #080a10); }
@@ -209,6 +212,43 @@ button, input { font: inherit; }
 .metric-grid span { color: var(--muted); font-size: .8rem; }
 .collection-picker { grid-column: 1 / -1; max-height: 380px; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: .5rem; padding: .8rem; background: #090c13; border-radius: .8rem; }
 .collection-picker label { display: flex; gap: .6rem; align-items: center; padding: .55rem; }
+.sidebar-link.active { color: #fff; background: linear-gradient(90deg, #7c5cff32, #7c5cff0a); border-color: #9b87ff55; }
+.sidebar-link.active span { color: #b9adff; }
+.mobile-dock { display: none; }
+.collection-shell { min-height: 100vh; padding-left: 220px; }
+.collection-hero { min-height: 50vh; display: flex; flex-direction: column; justify-content: space-between; padding: 2.5rem 5vw 4rem; background-color: #0b0f17; background-size: cover; background-position: center 25%; }
+.collection-hero h1 { max-width: 900px; margin: .45rem 0; font-size: clamp(3.2rem, 8vw, 7.5rem); line-height: .88; letter-spacing: -.065em; }
+.collection-hero p:last-child { color: #c8ced9; font-size: 1.05rem; }
+.collection-content { padding: 2.5rem 5vw 5rem; }
+.collection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.15rem; margin-top: 2.5rem; }
+.collection-card { min-height: 220px; display: flex; flex-direction: column; justify-content: flex-end; padding: 1.4rem; overflow: hidden; background: linear-gradient(145deg, #241e45, #111722 65%); background-size: cover; background-position: center; border: 1px solid #ffffff16; border-radius: 1.15rem; box-shadow: 0 18px 45px #0006; transition: transform .2s, border-color .2s; }
+.collection-card:hover, .collection-card:focus { transform: translateY(-5px); border-color: #a894ff88; }
+.collection-card span { margin-bottom: .5rem; color: #b9adff; font-size: .7rem; font-weight: 900; letter-spacing: .14em; }
+.collection-card strong { font-size: clamp(1.55rem, 3vw, 2.35rem); letter-spacing: -.035em; }
+.collection-card small { margin-top: .45rem; color: #c0c7d3; }
+.managed-collections { display: grid; gap: .75rem; margin-top: 1.4rem; }
+.managed-collection { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr) auto; align-items: center; gap: 1rem; padding: 1rem; background: #080b11; border: 1px solid #ffffff12; border-radius: .9rem; }
+.managed-collection.is-hidden { opacity: .58; }
+.managed-collection strong, .managed-collection span { display: block; }
+.managed-collection span { margin-top: .3rem; color: var(--muted); font-size: .82rem; }
+.managed-collection select { min-height: 44px; padding: 0 .8rem; color: #fff; background: #111722; border: 1px solid #ffffff1c; border-radius: .65rem; }
+.managed-collection .secondary-button { min-height: 42px; margin: 0; }
+@media (max-width: 900px) {
+  body { padding-bottom: 74px; }
+  .collection-shell { padding-left: 0; }
+  .mobile-dock { position: fixed; z-index: 45; right: .75rem; bottom: .65rem; left: .75rem; display: grid; grid-template-columns: repeat(4, 1fr); padding: .45rem; background: #0b0f17ed; border: 1px solid #ffffff1d; border-radius: 1.15rem; box-shadow: 0 16px 55px #000c; backdrop-filter: blur(18px); }
+  .mobile-dock a { min-height: 52px; display: grid; place-items: center; gap: .1rem; color: #8892a3; border-radius: .8rem; }
+  .mobile-dock a.active { color: #fff; background: #7c5cff2b; }
+  .mobile-dock span { font-size: 1.05rem; }
+  .mobile-dock small { font-size: .64rem; font-weight: 800; }
+  .managed-collection { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  .collection-hero { min-height: 44vh; padding: 5rem 1.25rem 2.5rem; }
+  .collection-content { padding: 1.5rem 1.25rem 3rem; }
+  .collection-grid { grid-template-columns: 1fr; }
+  .collection-card { min-height: 190px; }
+}
 @media (max-width: 700px) { .admin-shell { padding: 2rem 1.25rem; } .admin-header { flex-direction: column; } .status-grid { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .profile-form { grid-template-columns: 1fr; } .profile-row { grid-template-columns: 44px minmax(0, 1fr); } .profile-avatar { width: 44px; height: 44px; } .profile-actions { grid-column: 1 / -1; } }
 @media (max-width: 850px) { .organizer-card { grid-template-columns: 1fr; } }
