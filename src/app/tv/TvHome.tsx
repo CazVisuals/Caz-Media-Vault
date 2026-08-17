@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { MediaCard } from "@/components/media/MediaCard";
 import { ShowCard } from "@/components/media/ShowCard";
 import { TvSidebar } from "@/components/media/TvSidebar";
@@ -10,6 +11,7 @@ import { useTvNavigation } from "@/components/media/useTvNavigation";
 import type { LibraryResponse, Movie } from "@/lib/media/types";
 
 export default function TvHome() {
+  const router = useRouter();
   const [movies, setMovies] = useState<Movie[]>([]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -17,9 +19,11 @@ export default function TvHome() {
   const [refreshing, setRefreshing] = useState(false);
   const [owner, setOwner] = useState(false);
   const [profileState, setProfileState] = useState<{ progress: { mediaId: string; seconds: number; updatedAt: string; completed: boolean }[]; watchlist: string[] }>({ progress: [], watchlist: [] });
+  const [customCollections, setCustomCollections] = useState<Record<string, string[]>>({});
   useTvNavigation();
   useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { profile?: { role?: string } | null }) => setOwner(result.profile?.role === "owner")).catch(() => setOwner(false)); }, []);
   useEffect(() => { void fetch("/api/user/state", { cache: "no-store" }).then((response) => response.json()).then((result) => setProfileState({ progress: result.progress || [], watchlist: result.watchlist || [] })).catch(() => undefined); }, []);
+  useEffect(() => { void fetch("/api/media/collections", { cache: "no-store" }).then((response) => response.json()).then((result: { collections?: Record<string, string[]> }) => setCustomCollections(result.collections || {})).catch(() => undefined); }, []);
 
   useEffect(() => {
     let active = true;
@@ -73,6 +77,18 @@ export default function TvHome() {
   const kids = filtered.filter((movie) => movie.isKids);
   const continueWatching = profileState.progress.filter((item) => item.seconds > 30 && !item.completed).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((item) => movies.find((movie) => movie.id === item.mediaId)).filter((movie): movie is Movie => Boolean(movie));
   const myList = profileState.watchlist.map((id) => movies.find((movie) => movie.id === id)).filter((movie): movie is Movie => Boolean(movie));
+  const watchedIds = new Set(profileState.progress.filter((item) => item.completed).map((item) => item.mediaId));
+  const collections = (() => {
+    const groups = new Map<string, Movie[]>();
+    const inferred = (movie: Movie) => movie.collection || (/star wars/i.test(movie.title) ? "Star Wars" : /james bond|007/i.test(movie.title) ? "James Bond" : /lord of the rings|hobbit/i.test(movie.title) ? "Middle-earth" : /avengers|iron man|captain america|thor|spider-man|black panther/i.test(movie.title) ? "Marvel" : /christmas|holiday|santa/i.test(movie.title) ? "Holiday" : null);
+    for (const movie of movieItems) { const name = inferred(movie); if (name) groups.set(name, [...(groups.get(name) || []), movie]); }
+    for (const [name, ids] of Object.entries(customCollections)) { const items = ids.map((id) => movieItems.find((movie) => movie.id === id)).filter((movie): movie is Movie => Boolean(movie)); if (items.length) groups.set(name, items); }
+    return Array.from(groups.entries()).filter(([, items]) => items.length > 0);
+  })();
+  const recommended = (() => {
+    const watchedGenres = new Set(movies.filter((movie) => watchedIds.has(movie.id)).flatMap((movie) => movie.genres));
+    return movieItems.filter((movie) => !watchedIds.has(movie.id) && movie.genres.some((genre) => watchedGenres.has(genre))).sort((a, b) => (b.rating || 0) - (a.rating || 0));
+  })();
 
   return (
     <main className="tv-shell">
@@ -85,15 +101,17 @@ export default function TvHome() {
       <FeaturedHero movies={movies} />
 
       <section className="content-area">
-        <label className="search-wrap"><span>Search library</span><input data-focusable="true" className="focusable" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, year, or genre…" /></label>
+        <div className="library-tools"><label className="search-wrap"><span>Search library</span><input data-focusable="true" className="focusable" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, year, or genre…" /></label><button className="secondary-button focusable" data-focusable="true" onClick={() => void fetch("/api/media/surprise", { cache: "no-store" }).then((response) => response.json()).then((result: { id?: string }) => { if (result.id) router.push(`/tv/movie/${result.id}`); })}>🎲 Surprise Me</button></div>
         {loading ? <div className="state-card">Scanning your media vault…</div> : null}
         {error ? <div className="state-card error">{error}<small>Confirm MEDIA_ROOT points to your mounted NAS.</small></div> : null}
         {!loading && !error && movies.length === 0 ? <div className="state-card">No movie files found outside Inbox.</div> : null}
         {!query && continueWatching.length ? <MovieRow title="Continue Watching" movies={continueWatching.slice(0, 12)} /> : null}
         {!query && myList.length ? <MovieRow title="My List" movies={myList.slice(0, 12)} /> : null}
+        {!query && recommended.length ? <MovieRow title="Recommended For You" movies={recommended.slice(0, 12)} /> : null}
         {recent.length ? <MovieRow id="recent" title={query ? "Search Results" : "Recently Added"} movies={(query ? filtered : recent).slice(0, 12)} view="recent" /> : null}
         {!query && showGroups.length ? <ShowRow id="shows" shows={showGroups} /> : null}
         {!query && kids.length ? <MovieRow id="kids" title="Kids & Family" movies={kids.slice(0, 12)} view="kids" /> : null}
+        {!query && collections.map(([name, items]) => <MovieRow key={name} title={`${name} Collection`} movies={items.slice(0, 12)} />)}
         {!query && genres.filter((genre) => !["kids", "kids & family", "tv shows"].includes(genre.toLowerCase())).slice(0, 5).map((genre) => <MovieRow key={genre} title={genre} movies={movieItems.filter((movie) => movie.genres.includes(genre)).slice(0, 12)} view="movies" />)}
         {!query && movieItems.length ? <MovieRow id="movies" title="All Movies" movies={movieItems.slice(0, 12)} view="movies" /> : null}
       </section>

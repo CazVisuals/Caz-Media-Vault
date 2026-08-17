@@ -31,9 +31,10 @@ type AppData = {
   profiles: StoredProfile[];
   progress: Record<string, Record<string, ProgressRecord>>;
   watchlists: Record<string, string[]>;
+  customCollections: Record<string, string[]>;
 };
 
-const EMPTY_DATA: AppData = { version: 1, profiles: [], progress: {}, watchlists: {} };
+const EMPTY_DATA: AppData = { version: 1, profiles: [], progress: {}, watchlists: {}, customCollections: {} };
 let writes = Promise.resolve();
 
 function dataPath() {
@@ -48,6 +49,7 @@ async function readData(): Promise<AppData> {
       profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
       progress: parsed.progress && typeof parsed.progress === "object" ? parsed.progress : {},
       watchlists: parsed.watchlists && typeof parsed.watchlists === "object" ? parsed.watchlists : {},
+      customCollections: parsed.customCollections && typeof parsed.customCollections === "object" ? parsed.customCollections : {},
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return structuredClone(EMPTY_DATA);
@@ -187,4 +189,32 @@ export async function setWatchlist(profileId: string, mediaId: string, included:
     data.watchlists[profileId] = Array.from(current).slice(0, 500);
     return data.watchlists[profileId];
   });
+}
+
+export async function exportAppData() { return readData(); }
+
+export async function restoreAppData(value: unknown) {
+  if (!value || typeof value !== "object") throw new Error("Backup data is invalid.");
+  const candidate = value as Partial<AppData>;
+  if (!Array.isArray(candidate.profiles) || !candidate.progress || !candidate.watchlists) throw new Error("Backup is missing profiles, progress, or watchlists.");
+  return mutate((data) => {
+    data.profiles = candidate.profiles as StoredProfile[];
+    data.progress = candidate.progress as AppData["progress"];
+    data.watchlists = candidate.watchlists as AppData["watchlists"];
+    data.customCollections = candidate.customCollections && typeof candidate.customCollections === "object" ? candidate.customCollections : {};
+    return true;
+  });
+}
+
+export async function getCustomCollections() { return (await readData()).customCollections; }
+
+export async function saveCustomCollection(name: string, mediaIds: string[]) {
+  const cleanName = name.trim().slice(0, 60);
+  if (!cleanName) throw new Error("Collection name is required.");
+  const cleanIds = Array.from(new Set(mediaIds.filter((id) => /^[a-f0-9]{24}$/u.test(id)))).slice(0, 500);
+  return mutate((data) => { data.customCollections[cleanName] = cleanIds; return data.customCollections; });
+}
+
+export async function deleteCustomCollection(name: string) {
+  return mutate((data) => { delete data.customCollections[name]; return data.customCollections; });
 }

@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { resolveMovie } from "@/lib/media/catalog";
 import { NextRequest } from "next/server";
 import { currentSession } from "@/lib/auth/request";
+import { markStreaming } from "@/lib/media/activity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   const resolved = await locate(id);
   if (!resolved) return new Response("Movie not found.", { status: 404 });
   if ((await currentSession(request))?.role === "kids" && !resolved.movie.isKids) return new Response("This title is not available in the Kids profile.", { status: 403 });
+  await markStreaming(id).catch(() => undefined);
 
   const size = resolved.stat.size;
   const range = request.headers.get("range");

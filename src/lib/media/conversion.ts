@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { getMediaRoot } from "./catalog";
 import { probeMedia } from "./probe";
+import { streamingActive, withinConversionSchedule } from "./activity";
 
 export type ConversionMode = "remux" | "audio-convert" | "transcode";
 export type ConversionJob = { id: string; source: string; output: string; status: "queued" | "converting" | "completed" | "failed"; mode?: ConversionMode; progress?: number; durationSeconds?: number | null; error: string | null; createdAt: string; updatedAt: string };
@@ -39,6 +40,11 @@ function runFfmpeg(args: string[], jobId: string, durationSeconds: number | null
     if (!output) { reject(new Error("FFmpeg output is missing.")); return; }
     const child = spawn("ffmpeg", [...args.slice(0, -1), "-progress", "pipe:1", "-nostats", output], { stdio: ["ignore", "pipe", "pipe"] });
     currentFfmpeg = child;
+    let policyStopped = false;
+    const policyTimer = setInterval(() => { void (async () => {
+      const shouldStop = !withinConversionSchedule() || await streamingActive();
+      if (shouldStop !== policyStopped && !child.killed) { child.kill(shouldStop ? "SIGSTOP" : "SIGCONT"); policyStopped = shouldStop; }
+    })(); }, 5_000);
     let progressBuffer = "";
     let lastProgressWrite = 0;
     child.stdout?.on("data", (chunk) => {
@@ -53,8 +59,8 @@ function runFfmpeg(args: string[], jobId: string, durationSeconds: number | null
       }
     });
     let error = ""; child.stderr.on("data", (chunk) => { error = `${error}${chunk}`.slice(-8000); });
-    child.on("error", (reason) => { currentFfmpeg = null; reject(reason); });
-    child.on("exit", (code) => { currentFfmpeg = null; if (code === 0) resolve(); else reject(new Error(error.trim() || `FFmpeg exited with code ${code}.`)); });
+    child.on("error", (reason) => { clearInterval(policyTimer); currentFfmpeg = null; reject(reason); });
+    child.on("exit", (code) => { clearInterval(policyTimer); currentFfmpeg = null; if (code === 0) resolve(); else reject(new Error(error.trim() || `FFmpeg exited with code ${code}.`)); });
   });
 }
 
@@ -79,6 +85,13 @@ export async function clearConversions(mode: "failed" | "finished") {
   const kept = jobs.filter((job) => mode === "failed" ? job.status !== "failed" : !["failed", "completed"].includes(job.status));
   await writeJobs(kept);
   return kept;
+}
+
+export async function pruneConversionHistory(days = 30) {
+  const cutoff = Date.now() - days * 86_400_000;
+  const jobs = (await readJobs()).filter((job) => !["failed", "completed"].includes(job.status) || Date.parse(job.updatedAt) >= cutoff);
+  await writeJobs(jobs);
+  return jobs.length;
 }
 
 async function processJob(job: ConversionJob) {
