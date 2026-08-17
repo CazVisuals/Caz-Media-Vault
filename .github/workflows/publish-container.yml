@@ -37,8 +37,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-qemu-action@v3
@@ -62,7 +60,6 @@ jobs:
             org.opencontainers.image.description=Private NAS-backed household media platform
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - name: Build and publish multi-platform image
-        id: push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -72,10 +69,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Attest published image
-        uses: actions/attest@v4
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
-
