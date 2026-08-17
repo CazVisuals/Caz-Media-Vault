@@ -80,8 +80,23 @@ export default function TvHome() {
   const watchedIds = new Set(profileState.progress.filter((item) => item.completed).map((item) => item.mediaId));
   const collections = (() => {
     const groups = new Map<string, Movie[]>();
-    const inferred = (movie: Movie) => movie.collection || (/star wars/i.test(movie.title) ? "Star Wars" : /james bond|007/i.test(movie.title) ? "James Bond" : /lord of the rings|hobbit/i.test(movie.title) ? "Middle-earth" : /avengers|iron man|captain america|thor|spider-man|black panther/i.test(movie.title) ? "Marvel" : /christmas|holiday|santa/i.test(movie.title) ? "Holiday" : null);
-    for (const movie of movieItems) { const name = inferred(movie); if (name) groups.set(name, [...(groups.get(name) || []), movie]); }
+    const inferred = (movie: Movie) => {
+      const searchable = `${movie.title} ${movie.collection || ""}`;
+      const names = new Set<string>();
+      if (movie.collection) names.add(movie.collection);
+      if (/star[\s-]*wars/i.test(searchable)) names.add("Star Wars");
+      if (/james bond|\b007\b/i.test(searchable)) names.add("James Bond");
+      if (/lord of the rings|\bhobbit\b|middle[\s-]*earth/i.test(searchable)) names.add("Middle-earth");
+      if (/spider[\s-]*man|spider[\s-]*verse|venom|avengers|iron[\s-]*man|captain america|captain marvel|thor|black panther|guardians of the galaxy|doctor strange|ant[\s-]*man|deadpool|wolverine|\bx[\s-]*men\b|fantastic four|marvel/i.test(searchable)) names.add("Marvel");
+      if (/christmas|holiday|santa/i.test(searchable)) names.add("Holiday");
+      return [...names];
+    };
+    for (const movie of movieItems) {
+      for (const name of inferred(movie)) {
+        const items = groups.get(name) || [];
+        if (!items.some((item) => item.id === movie.id)) groups.set(name, [...items, movie]);
+      }
+    }
     for (const [name, ids] of Object.entries(customCollections)) { const items = ids.map((id) => movieItems.find((movie) => movie.id === id)).filter((movie): movie is Movie => Boolean(movie)); if (items.length) groups.set(name, items); }
     return Array.from(groups.entries()).filter(([, items]) => items.length > 0);
   })();
