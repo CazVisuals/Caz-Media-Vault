@@ -61,7 +61,9 @@ export default function Player({ id }: { id: string }) {
   return <main className="player-shell">
     <Link href={`/tv/movie/${id}`} className="player-back">← Back</Link>
     {castAvailable ? <button className="player-cast secondary-button" onClick={() => void cast()}>▣ Cast</button> : null}
-    <video ref={videoRef} src={`/api/media/stream/${id}`} controls autoPlay playsInline preload="metadata" {...{ "x-webkit-airplay": "allow" }} onError={() => setPlaybackError("This video format or audio codec is not supported by this device.")} />
+    <video ref={videoRef} src={`/api/media/stream/${id}`} controls autoPlay playsInline preload="metadata" {...{ "x-webkit-airplay": "allow" }} onError={() => setPlaybackError("This video format or audio codec is not supported by this device.")}>
+      <track kind="subtitles" src={`/api/media/subtitles/${id}`} srcLang="en" label="English" />
+    </video>
     {showUpNext && nextEpisode ? <aside className="up-next"><small>UP NEXT</small><strong>{nextEpisode.title}</strong><div><button className="primary-button" onClick={() => router.replace(`/tv/watch/${nextEpisode.id}`)}>Play now</button><button className="secondary-button" onClick={() => setShowUpNext(false)}>Dismiss</button></div></aside> : null}
     {warning || playbackError ? <aside className="player-notice" role="alert"><strong>{playbackError ? "Playback unavailable" : "Mobile compatibility"}</strong><p>{playbackError || warning}</p><small>Original file: {movie?.fileName || "Loading…"}</small></aside> : null}
   </main>;

@@ -5,10 +5,10 @@ import { createHash } from "node:crypto";
 import { getMediaRoot } from "./catalog";
 import { probeMedia } from "./probe";
 import { streamingActive, withinConversionSchedule } from "./activity";
+import { ensureAppDataRoot } from "@/lib/app-data/path";
 
 export type ConversionMode = "remux" | "audio-convert" | "transcode";
 export type ConversionJob = { id: string; source: string; output: string; status: "queued" | "converting" | "completed" | "failed"; mode?: ConversionMode; progress?: number; durationSeconds?: number | null; error: string | null; createdAt: string; updatedAt: string };
-const STORE_DIR = ".constants-hub";
 const STORE_FILE = "conversion-queue.json";
 const PAUSE_FILE = "conversion-paused";
 let worker: Promise<void> | null = null;
@@ -22,8 +22,7 @@ async function paths() {
   const inbox = await fs.realpath(/* turbopackIgnore: true */ path.resolve(/* turbopackIgnore: true */ process.env.MEDIA_INBOX?.trim() || path.join(root, "Inbox")));
   const inside = path.relative(root, inbox);
   if (!inside || inside.startsWith("..") || path.isAbsolute(inside)) throw new Error("MEDIA_INBOX must be inside MEDIA_ROOT.");
-  const store = path.join(root, STORE_DIR);
-  await fs.mkdir(store, { recursive: true });
+  const store = await ensureAppDataRoot();
   return { root, inbox, store, file: path.join(store, STORE_FILE) };
 }
 
@@ -102,8 +101,11 @@ async function processJob(job: ConversionJob) {
   const output = path.resolve(root, job.output);
   const outputInside = path.relative(root, output);
   if (!outputInside || outputInside.startsWith("..") || path.isAbsolute(outputInside)) throw new Error("Conversion output escapes the media library.");
-  const tempDir = path.join(root, STORE_DIR, "converting");
-  const originals = path.join(root, STORE_DIR, "originals", path.dirname(inside));
+  // Media-sized temporary/original files stay on the media filesystem so the
+  // final rename remains atomic even when APP_DATA_ROOT is another volume.
+  const mediaWork = path.join(root, ".constants-hub");
+  const tempDir = path.join(mediaWork, "converting");
+  const originals = path.join(mediaWork, "originals", path.dirname(inside));
   await fs.mkdir(tempDir, { recursive: true }); await fs.mkdir(originals, { recursive: true });
   const temp = path.join(tempDir, `${job.id}.mp4`);
   await fs.rm(temp, { force: true });
@@ -113,11 +115,16 @@ async function processJob(job: ConversionJob) {
     await fs.rm(temp, { force: true });
     await update(job.id, { mode, progress: 0, durationSeconds: sourceProbe.durationSeconds, error: null });
     const common = ["-hide_banner", "-y", "-i", source, "-map", "0:v:0", "-map", "0:a:0?", "-sn"];
+    const accelerator = process.env.TRANSCODE_ACCEL?.trim().toLowerCase() || "none";
+    const hardwareVideo = accelerator === "nvenc" ? ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"]
+      : accelerator === "qsv" ? ["-c:v", "h264_qsv", "-global_quality", "20"]
+        : accelerator === "vaapi" ? ["-vaapi_device", process.env.VAAPI_DEVICE || "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "20"]
+          : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads:v", process.env.TRANSCODE_THREADS || "1"];
     const codecArgs = mode === "remux"
       ? ["-c:v", "copy", "-c:a", "copy"]
       : mode === "audio-convert"
         ? ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
-        : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads:v", "1", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k"];
+        : [...hardwareVideo, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k"];
     await runFfmpeg([...common, ...codecArgs, "-movflags", "+faststart", "-avoid_negative_ts", "make_zero", temp], job.id, sourceProbe.durationSeconds);
     const verified = await probeMedia(temp);
     if (!verified.mobileCompatible) throw new Error("Converted file failed mobile compatibility verification.");

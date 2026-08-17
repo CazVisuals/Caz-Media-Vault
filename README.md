@@ -65,6 +65,12 @@ The organizer still restricts moves to sources inside `/media/Inbox`, rejects pa
 
 The Cloudflare connector reads `TUNNEL_TOKEN` from a local uncommitted `.env` file. The token must never be added to Git.
 
+## Persistent application data
+
+Profiles, password hashes, viewing progress, watchlists, collection settings, maintenance state, and the conversion queue are stored beneath `APP_DATA_ROOT`. Synology Compose mounts `./data` at `/data` by default, so this state survives image pulls and container replacement. On the first upgraded start, an empty `/data` directory is automatically initialized from the former `/media/.constants-hub` state when available. Large conversion originals remain on the media filesystem for safe atomic replacement.
+
+The browser is installable as a PWA from Safari or Chrome. It caches only the application shell and artwork—not authenticated API responses or movie bytes. Sidecar `.srt`, `.vtt`, `.en.srt`, and `.en.vtt` files sharing a video's base filename appear as English subtitles in the player.
+
 ## Media compatibility and conversion
 
 Open `/settings/media` to inspect the real container, video codec, audio codec, resolution, and mobile compatibility of every movie. The Docker image includes FFprobe and FFmpeg.
@@ -78,6 +84,8 @@ The DS223 has limited CPU resources, so full-length conversions can take many ho
 Conversions use one FFmpeg video thread to leave capacity for simultaneous playback. The Media Compatibility page provides persistent Pause and Resume controls, per-job and overall progress bars, and safe cleanup for completed or failed history. Pausing suspends the active FFmpeg process without stopping Constant’s Hub or discarding the queue.
 
 Smart conversion copies compatible H.264/AAC streams directly into MP4, converts only audio when the video is already compatible, and uses full H.264 encoding only when required. By default conversions run from midnight until 7 a.m. and automatically suspend while a stream is active. Configure the window with `CONVERSION_SCHEDULE_ENABLED`, `CONVERSION_START_HOUR`, and `CONVERSION_END_HOUR`.
+
+Future servers can enable hardware conversion with `TRANSCODE_ACCEL=qsv`, `vaapi`, or `nvenc`; the default remains the safe software setting `none`. Hardware device passthrough is host-specific and should only be enabled after the server GPU is known. `TRANSCODE_THREADS` controls the software encoder's CPU usage.
 
 ## Kids & Family and Synology artwork
 

@@ -10,6 +10,7 @@ services:
     environment:
       MEDIA_ROOT: /media
       MEDIA_INBOX: /media/Inbox
+      APP_DATA_ROOT: /data
       TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN:-}
       CONVERSION_SCHEDULE_ENABLED: ${CONVERSION_SCHEDULE_ENABLED:-true}
       CONVERSION_START_HOUR: ${CONVERSION_START_HOUR:-0}
@@ -19,10 +20,14 @@ services:
       AUTH_USERNAME: ${AUTH_USERNAME:-}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-}
       AUTH_SECRET: ${AUTH_SECRET:-}
+      TRANSCODE_ACCEL: ${TRANSCODE_ACCEL:-none}
+      TRANSCODE_THREADS: ${TRANSCODE_THREADS:-1}
+      VAAPI_DEVICE: ${VAAPI_DEVICE:-/dev/dri/renderD128}
     ports:
       - "3000:3000"
     volumes:
       - "${MEDIA_HOST_PATH:-/volume1/video}:/media:rw"
+      - "${APP_DATA_HOST_PATH:-./data}:/data:rw"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s

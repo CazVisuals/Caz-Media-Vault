@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } fr
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { getMediaRoot } from "@/lib/media/catalog";
+import { ensureAppDataRoot } from "@/lib/app-data/path";
 
 const scrypt = promisify(scryptCallback);
 
@@ -39,13 +39,13 @@ type AppData = {
 const EMPTY_DATA: AppData = { version: 1, profiles: [], progress: {}, watchlists: {}, customCollections: {}, hiddenCollections: [], collectionArtwork: {} };
 let writes = Promise.resolve();
 
-function dataPath() {
-  return path.join(getMediaRoot(), ".constants-hub", "app-data.json");
+async function dataPath() {
+  return path.join(await ensureAppDataRoot(), "app-data.json");
 }
 
 async function readData(): Promise<AppData> {
   try {
-    const parsed = JSON.parse(await fs.readFile(dataPath(), "utf8")) as Partial<AppData>;
+    const parsed = JSON.parse(await fs.readFile(await dataPath(), "utf8")) as Partial<AppData>;
     return {
       version: 1,
       profiles: Array.isArray(parsed.profiles) ? parsed.profiles : [],
@@ -62,7 +62,7 @@ async function readData(): Promise<AppData> {
 }
 
 async function writeData(data: AppData) {
-  const file = dataPath();
+  const file = await dataPath();
   await fs.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   await fs.writeFile(temporary, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });

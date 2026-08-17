@@ -3,9 +3,10 @@ import path from "node:path";
 import { buildLibrary, getMediaRoot } from "./catalog";
 import { pruneConversionHistory, scanAndQueueConversions } from "./conversion";
 import { downloadTmdbPoster, findTmdbPoster, writePosterPair } from "./posters";
+import { ensureAppDataRoot } from "@/lib/app-data/path";
 
 let running: Promise<void> | null = null;
-const statusPath = () => path.join(getMediaRoot(), ".constants-hub", "maintenance.json");
+const statusPath = async () => path.join(await ensureAppDataRoot(), "maintenance.json");
 
 async function run() {
   const root = await fs.realpath(getMediaRoot());
@@ -23,8 +24,9 @@ async function run() {
   }
   const queued = await scanAndQueueConversions();
   const retainedJobs = await pruneConversionHistory();
-  await fs.mkdir(path.dirname(statusPath()), { recursive: true });
-  await fs.writeFile(statusPath(), JSON.stringify({ lastRun: new Date().toISOString(), success: true, titlesScanned: library.length, postersUpdated, conversionsQueued: queued.length, retainedJobs }, null, 2));
+  const status = await statusPath();
+  await fs.mkdir(path.dirname(status), { recursive: true });
+  await fs.writeFile(status, JSON.stringify({ lastRun: new Date().toISOString(), success: true, titlesScanned: library.length, postersUpdated, conversionsQueued: queued.length, retainedJobs }, null, 2));
 }
 
 export function scheduleMaintenance() {
@@ -33,13 +35,14 @@ export function scheduleMaintenance() {
   if (new Date().getHours() !== hour) return;
   running = (async () => {
     try {
-      const current = JSON.parse(await fs.readFile(statusPath(), "utf8")) as { lastRun?: string };
+      const current = JSON.parse(await fs.readFile(await statusPath(), "utf8")) as { lastRun?: string };
       if (current.lastRun?.slice(0, 10) === new Date().toISOString().slice(0, 10)) return;
     } catch { /* first run */ }
     try { await run(); }
     catch (error) {
-      await fs.mkdir(path.dirname(statusPath()), { recursive: true });
-      await fs.writeFile(statusPath(), JSON.stringify({ lastRun: new Date().toISOString(), success: false, error: error instanceof Error ? error.message : "Maintenance failed." }, null, 2));
+      const status = await statusPath();
+      await fs.mkdir(path.dirname(status), { recursive: true });
+      await fs.writeFile(status, JSON.stringify({ lastRun: new Date().toISOString(), success: false, error: error instanceof Error ? error.message : "Maintenance failed." }, null, 2));
     }
   })().finally(() => { running = null; });
 }

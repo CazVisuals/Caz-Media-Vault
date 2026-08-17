@@ -1,19 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getMediaRoot } from "./catalog";
+import { ensureAppDataRoot } from "@/lib/app-data/path";
 
 const ACTIVE_WINDOW_MS = 2 * 60_000;
-const filePath = () => path.join(getMediaRoot(), ".constants-hub", "last-stream.json");
+const filePath = async () => path.join(await ensureAppDataRoot(), "last-stream.json");
 
 export async function markStreaming(mediaId: string) {
-  const file = filePath();
+  const file = await filePath();
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, JSON.stringify({ mediaId, at: Date.now() }));
 }
 
 export async function streamingActive() {
   try {
-    const value = JSON.parse(await fs.readFile(filePath(), "utf8")) as { at?: number };
+    const value = JSON.parse(await fs.readFile(await filePath(), "utf8")) as { at?: number };
     return typeof value.at === "number" && Date.now() - value.at < ACTIVE_WINDOW_MS;
   } catch { return false; }
 }
