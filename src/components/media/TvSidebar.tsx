@@ -27,9 +27,9 @@ export function TvSidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [owner, setOwner] = useState(false);
+  const [admin, setAdmin] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
-  useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { authenticated?: boolean; profile?: { role?: string } | null }) => { setAuthenticated(Boolean(result.authenticated)); setOwner(result.profile?.role === "owner"); }).catch(() => { setAuthenticated(false); setOwner(false); }); }, []);
+  useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { authenticated?: boolean; profile?: { role?: string } | null }) => { setAuthenticated(Boolean(result.authenticated)); setAdmin(result.profile?.role === "owner" || result.profile?.role === "admin"); }).catch(() => { setAuthenticated(false); setAdmin(false); }); }, []);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
@@ -41,7 +41,7 @@ export function TvSidebar() {
     {open ? <button className="nav-scrim" aria-label="Close navigation" onClick={() => setOpen(false)} /> : null}
     <aside className={`tv-sidebar${open ? " open" : ""}`}>
       <div className="sidebar-brand"><span>CONSTANT’S</span><strong>HUB</strong></div>
-      <nav aria-label="Main navigation">{links.map((item) => <Link key={item.href} href={item.href} className={`sidebar-link focusable${pathname === item.href.split("?")[0] ? " active" : ""}`} data-focusable="true" onClick={() => setOpen(false)}><span aria-hidden="true">{item.icon}</span>{item.label}</Link>)}{owner ? <Link href="/settings" className={`sidebar-link focusable${pathname.startsWith("/settings") ? " active" : ""}`} data-focusable="true" onClick={() => setOpen(false)}><span aria-hidden="true">⚙</span>Settings</Link> : null}</nav>
+      <nav aria-label="Main navigation">{links.map((item) => <Link key={item.href} href={item.href} className={`sidebar-link focusable${pathname === item.href.split("?")[0] ? " active" : ""}`} data-focusable="true" onClick={() => setOpen(false)}><span aria-hidden="true">{item.icon}</span>{item.label}</Link>)}{admin ? <Link href="/settings" className={`sidebar-link focusable${pathname.startsWith("/settings") ? " active" : ""}`} data-focusable="true" onClick={() => setOpen(false)}><span aria-hidden="true">⚙</span>Settings</Link> : null}</nav>
       <div className="sidebar-footer">
         {authenticated ? <button className="sidebar-link sidebar-logout focusable" data-focusable="true" onClick={() => void logout()}><span aria-hidden="true">↪</span>Log out</button> : null}
         <button className="sidebar-close focusable" data-focusable="true" onClick={() => setOpen(false)}>Close</button>

@@ -11,6 +11,7 @@ export type ConversionMode = "remux" | "audio-convert" | "transcode";
 export type ConversionJob = { id: string; source: string; output: string; status: "queued" | "converting" | "completed" | "failed"; mode?: ConversionMode; progress?: number; durationSeconds?: number | null; error: string | null; createdAt: string; updatedAt: string };
 const STORE_FILE = "conversion-queue.json";
 const PAUSE_FILE = "conversion-paused";
+const RUN_NOW_FILE = "conversion-run-now";
 let worker: Promise<void> | null = null;
 let currentFfmpeg: ChildProcess | null = null;
 let autoScan: Promise<void> | null = null;
@@ -41,7 +42,7 @@ function runFfmpeg(args: string[], jobId: string, durationSeconds: number | null
     currentFfmpeg = child;
     let policyStopped = false;
     const policyTimer = setInterval(() => { void (async () => {
-      const shouldStop = !withinConversionSchedule() || await streamingActive();
+      const shouldStop = (!withinConversionSchedule() && !await conversionOverrideActive()) || await streamingActive();
       if (shouldStop !== policyStopped && !child.killed) { child.kill(shouldStop ? "SIGSTOP" : "SIGCONT"); policyStopped = shouldStop; }
     })(); }, 5_000);
     let progressBuffer = "";
@@ -64,10 +65,13 @@ function runFfmpeg(args: string[], jobId: string, durationSeconds: number | null
 }
 
 async function pausePath() { return path.join((await paths()).store, PAUSE_FILE); }
+async function runNowPath() { return path.join((await paths()).store, RUN_NOW_FILE); }
 export async function conversionsPaused() { try { await fs.access(await pausePath()); return true; } catch { return false; } }
+export async function conversionOverrideActive() { try { await fs.access(await runNowPath()); return true; } catch { return false; } }
 
 export async function pauseConversions() {
   await fs.writeFile(await pausePath(), new Date().toISOString());
+  await fs.rm(await runNowPath(), { force: true });
   if (currentFfmpeg && !currentFfmpeg.killed) currentFfmpeg.kill("SIGSTOP");
   return true;
 }
@@ -77,6 +81,13 @@ export async function resumeConversions() {
   if (currentFfmpeg && !currentFfmpeg.killed) currentFfmpeg.kill("SIGCONT");
   startConversionWorker();
   return false;
+}
+
+export async function runConversionsNow() {
+  await fs.rm(await pausePath(), { force: true });
+  await fs.writeFile(await runNowPath(), new Date().toISOString());
+  if (currentFfmpeg && !currentFfmpeg.killed) currentFfmpeg.kill("SIGCONT");
+  startConversionWorker();
 }
 
 export async function clearConversions(mode: "failed" | "finished") {
@@ -146,7 +157,8 @@ async function processJob(job: ConversionJob) {
 async function work() {
   for (;;) {
     if (await conversionsPaused()) return;
-    const jobs = await readJobs(); const job = jobs.find((item) => item.status === "queued" || item.status === "converting"); if (!job) return;
+    const jobs = await readJobs(); const job = jobs.find((item) => item.status === "queued" || item.status === "converting");
+    if (!job) { await fs.rm(await runNowPath(), { force: true }); return; }
     await update(job.id, { status: "converting", error: null });
     try { await processJob(job); await update(job.id, { status: "completed", progress: 100 }); } catch (error) { await update(job.id, { status: "failed", error: error instanceof Error ? error.message : "Conversion failed." }); }
   }

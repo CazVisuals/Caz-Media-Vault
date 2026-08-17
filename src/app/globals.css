@@ -204,6 +204,8 @@ button, input { font: inherit; }
 .conversion-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .8rem; }
 .conversion-paused { border-color: #f59e0b55; }
 .conversion-paused strong { color: #fde68a; }
+.conversion-override { border-color: #5eead455; }
+.conversion-override strong { color: #7ff2d8; }
 
 /* Private, device-local offline library */
 .offline-control { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .7rem; }

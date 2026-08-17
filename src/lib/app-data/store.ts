@@ -6,7 +6,7 @@ import { ensureAppDataRoot } from "@/lib/app-data/path";
 
 const scrypt = promisify(scryptCallback);
 
-export type ProfileRole = "family" | "kids" | "guest";
+export type ProfileRole = "admin" | "family" | "kids" | "guest";
 
 export type PublicProfile = {
   id: string;
@@ -135,12 +135,16 @@ export async function createProfile(input: { username: string; displayName: stri
   });
 }
 
-export async function updateProfile(id: string, input: { displayName?: string; password?: string; pin?: string; disabled?: boolean; expiresAt?: string | null }) {
+export async function updateProfile(id: string, input: { displayName?: string; password?: string; pin?: string; disabled?: boolean; expiresAt?: string | null; role?: ProfileRole }) {
   return mutate(async (data) => {
     const profile = data.profiles.find((item) => item.id === id);
     if (!profile) throw new Error("Profile not found.");
     if (typeof input.displayName === "string") profile.displayName = input.displayName.trim().slice(0, 40) || profile.displayName;
     if (typeof input.disabled === "boolean") profile.disabled = input.disabled;
+    if (input.role) {
+      profile.role = input.role;
+      if (input.role !== "guest") profile.expiresAt = null;
+    }
     if (input.expiresAt !== undefined) profile.expiresAt = input.expiresAt ? new Date(input.expiresAt).toISOString() : null;
     if (input.password) {
       if (input.password.length < 8) throw new Error("Password must be at least 8 characters.");

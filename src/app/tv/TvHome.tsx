@@ -18,13 +18,13 @@ export default function TvHome() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [owner, setOwner] = useState(false);
+  const [admin, setAdmin] = useState(false);
   const [profile, setProfile] = useState<{ displayName?: string; role?: string } | null>(null);
   const [profileState, setProfileState] = useState<{ progress: { mediaId: string; seconds: number; updatedAt: string; completed: boolean }[]; watchlist: string[] }>({ progress: [], watchlist: [] });
   const [customCollections, setCustomCollections] = useState<Record<string, string[]>>({});
   const [hiddenCollections, setHiddenCollections] = useState<string[]>([]);
   useTvNavigation();
-  useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { profile?: { displayName?: string; role?: string } | null }) => { setProfile(result.profile || null); setOwner(result.profile?.role === "owner"); }).catch(() => setOwner(false)); }, []);
+  useEffect(() => { void fetch("/api/auth/me", { cache: "no-store" }).then((response) => response.json()).then((result: { profile?: { displayName?: string; role?: string } | null }) => { setProfile(result.profile || null); setAdmin(result.profile?.role === "owner" || result.profile?.role === "admin"); }).catch(() => setAdmin(false)); }, []);
   useEffect(() => { void fetch("/api/user/state", { cache: "no-store" }).then((response) => response.json()).then((result) => setProfileState({ progress: result.progress || [], watchlist: result.watchlist || [] })).catch(() => undefined); }, []);
   useEffect(() => { void fetch("/api/media/collections", { cache: "no-store" }).then((response) => response.json()).then((result: { collections?: Record<string, string[]>; hiddenCollections?: string[] }) => { setCustomCollections(result.collections || {}); setHiddenCollections(result.hiddenCollections || []); }).catch(() => undefined); }, []);
 
@@ -100,7 +100,7 @@ export default function TvHome() {
       <header className="topbar">
         <Link href="/tv" className="brand focusable" data-focusable="true"><span>CONSTANT’S</span> HUB</Link>
         <div className="mobile-profile"><span>{(profile?.displayName || "H").slice(0, 1).toUpperCase()}</span><strong>{profile?.displayName || "Home"}</strong></div>
-        <nav><Link href="/tv/search" className="header-icon focusable" data-focusable="true" aria-label="Search">⌕</Link><Link href="/tv/offline" className="header-icon focusable" data-focusable="true" aria-label="Downloads">↓</Link><button className={`nav-button nav-refresh focusable${refreshing ? " spinning" : ""}`} data-focusable="true" aria-label="Refresh library" title="Refresh library" onClick={() => window.location.reload()}>↻</button><Link href="/tv/browse?view=movies" className="desktop-nav-link focusable" data-focusable="true">Movies</Link>{owner ? <Link href="/settings" className="desktop-nav-link focusable" data-focusable="true">Admin</Link> : null}</nav>
+        <nav><Link href="/tv/search" className="header-icon focusable" data-focusable="true" aria-label="Search">⌕</Link><Link href="/tv/offline" className="header-icon focusable" data-focusable="true" aria-label="Downloads">↓</Link><button className={`nav-button nav-refresh focusable${refreshing ? " spinning" : ""}`} data-focusable="true" aria-label="Refresh library" title="Refresh library" onClick={() => window.location.reload()}>↻</button><Link href="/tv/browse?view=movies" className="desktop-nav-link focusable" data-focusable="true">Movies</Link>{admin ? <Link href="/settings" className="desktop-nav-link focusable" data-focusable="true">Admin</Link> : null}</nav>
       </header>
 
       <FeaturedHero movies={movies} />

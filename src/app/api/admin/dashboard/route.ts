@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import { NextRequest } from "next/server";
-import { requireOwner } from "@/lib/auth/request";
+import { requireAdmin } from "@/lib/auth/request";
 import { buildLibrary } from "@/lib/media/catalog";
 import { listConversions } from "@/lib/media/conversion";
 import { streamingActive, withinConversionSchedule } from "@/lib/media/activity";
@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  if (!await requireOwner(request)) return Response.json({ error: "Owner access required." }, { status: 403 });
+  if (!await requireAdmin(request)) return Response.json({ error: "Admin access required." }, { status: 403 });
   const library = await buildLibrary();
   const jobs = await listConversions();
   const shows = new Set(library.filter((item) => item.mediaType === "tv").map((item) => (item.seriesTitle || item.title).toLowerCase()));

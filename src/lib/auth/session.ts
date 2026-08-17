@@ -1,7 +1,7 @@
 export const AUTH_COOKIE_NAME = "constants_hub_session";
 export const AUTH_SESSION_SECONDS = 60 * 60 * 24 * 30;
 
-export type SessionRole = "owner" | "family" | "kids" | "guest";
+export type SessionRole = "owner" | "admin" | "family" | "kids" | "guest";
 export type SessionPayload = {
   profileId: string;
   username: string;
@@ -66,7 +66,7 @@ export async function verifySessionToken(token: string | undefined, secret: stri
 
   try {
     const payload = JSON.parse(decodeBase64Url(encoded)) as SessionPayload;
-    if (!payload.profileId || !payload.username || !payload.displayName || !["owner", "family", "kids", "guest"].includes(payload.role)) return null;
+    if (!payload.profileId || !payload.username || !payload.displayName || !["owner", "admin", "family", "kids", "guest"].includes(payload.role)) return null;
     return Number.isFinite(payload.expiresAt) && payload.expiresAt > Date.now() ? payload : null;
   } catch {
     return null;

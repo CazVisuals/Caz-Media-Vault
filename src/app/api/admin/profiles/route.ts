@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as Record<string, unknown>;
     const role = body.role;
-    if (!(["family", "kids", "guest"] as unknown[]).includes(role)) throw new Error("Choose Family, Kids, or Guest.");
+    if (!(["admin", "family", "kids", "guest"] as unknown[]).includes(role)) throw new Error("Choose Admin, Family, Kids, or Guest.");
     if (String(body.username ?? "").trim().toLowerCase() === (process.env.AUTH_USERNAME ?? "").trim().toLowerCase()) throw new Error("That username is reserved for the Owner account.");
     const profile = await createProfile({
       username: String(body.username ?? ""), displayName: String(body.displayName ?? ""), password: String(body.password ?? ""),
@@ -40,6 +40,7 @@ export async function PATCH(request: NextRequest) {
       pin: typeof body.pin === "string" && body.pin ? body.pin : undefined,
       disabled: typeof body.disabled === "boolean" ? body.disabled : undefined,
       expiresAt: typeof body.expiresAt === "string" ? body.expiresAt || null : undefined,
+      role: (["admin", "family", "kids", "guest"] as unknown[]).includes(body.role) ? body.role as ProfileRole : undefined,
     });
     return Response.json({ success: true, profile });
   } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Could not update profile." }, { status: 400 }); }

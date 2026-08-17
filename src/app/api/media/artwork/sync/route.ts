@@ -3,13 +3,13 @@ import path from "node:path";
 import { buildLibrary, getMediaRoot } from "@/lib/media/catalog";
 import { downloadTmdbPoster, findTmdbPoster, writePosterPair } from "@/lib/media/posters";
 import { NextRequest } from "next/server";
-import { requireOwner } from "@/lib/auth/request";
+import { requireAdmin } from "@/lib/auth/request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  if (!await requireOwner(request)) return Response.json({ success: false, error: "Owner access required." }, { status: 403 });
+  if (!await requireAdmin(request)) return Response.json({ success: false, error: "Admin access required." }, { status: 403 });
   try {
     const root = await fs.realpath(/* turbopackIgnore: true */ getMediaRoot());
     const movies = await buildLibrary();
