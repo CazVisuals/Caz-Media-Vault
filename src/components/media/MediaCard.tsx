@@ -4,14 +4,15 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { OfflineDownloadButton } from "@/components/media/OfflineDownloadButton";
 import type { Movie } from "@/lib/media/types";
+import styles from "./MediaCard.module.css";
 
 export function MediaCard({ movie }: { movie: Movie }) {
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => { if (!menuOpen) return; const close = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); }; document.body.style.overflow = "hidden"; window.addEventListener("keydown", close); return () => { document.body.style.overflow = ""; window.removeEventListener("keydown", close); }; }, [menuOpen]);
   const detailHref = movie.mediaType === "tv" ? `/tv/show/${encodeURIComponent(movie.seriesTitle || movie.title)}` : `/tv/movie/${movie.id}`;
   return <>
-    <article className="media-card group">
-      <div className="poster-shell netflix-poster-shell">
+    <article className={`media-card group ${styles.card}`}>
+      <div className={`poster-shell netflix-poster-shell ${styles.posterShell}`}>
         <Link href={`/tv/watch/${movie.id}`} aria-label={`Play ${movie.title}`} className="netflix-poster-play focusable" data-focusable="true">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           {movie.posterUrl ? <img src={movie.posterUrl} alt="" className="poster" /> : <div className="poster-fallback"><span>CH</span></div>}
