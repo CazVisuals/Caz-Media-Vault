@@ -16,6 +16,7 @@ $StateFile = Join-Path $WorkRoot 'worker-state.json'
 $LogFile = Join-Path $WorkRoot 'worker.log'
 $ControlRoot = Join-Path $MediaRoot '.constants-hub\pc-worker'
 $ControlStatus = Join-Path $ControlRoot 'status.json'
+$HistoryFile = Join-Path $ControlRoot 'history.json'
 $LocalStopFile = Join-Path $WorkRoot 'STOP'
 $LocalPauseFile = Join-Path $WorkRoot 'PAUSE'
 $RemoteStopFile = Join-Path $ControlRoot 'STOP'
@@ -30,6 +31,31 @@ function Save-State([hashtable]$State) {
   $json = $State | ConvertTo-Json -Depth 5
   $json | Set-Content -Path $StateFile -Encoding UTF8
   try { $json | Set-Content -Path $ControlStatus -Encoding UTF8 } catch {}
+}
+function Read-History {
+  try {
+    if(!(Test-Path -LiteralPath $HistoryFile)){return @()}
+    $raw = Get-Content -LiteralPath $HistoryFile -Raw
+    if([string]::IsNullOrWhiteSpace($raw)){return @()}
+    $parsed = $raw | ConvertFrom-Json
+    if($null -eq $parsed){return @()}
+    return @($parsed)
+  } catch { return @() }
+}
+function Update-History([hashtable]$Job) {
+  try {
+    $history = @(Read-History)
+    $existing = $history | Where-Object { $_.id -eq $Job.id } | Select-Object -First 1
+    if($existing){
+      foreach($key in $Job.Keys){$existing | Add-Member -NotePropertyName $key -NotePropertyValue $Job[$key] -Force}
+      $existing | Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force
+    } else {
+      $record = [pscustomobject]$Job
+      $record | Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force
+      $history = @($record) + $history
+    }
+    @($history | Select-Object -First 250) | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $HistoryFile -Encoding UTF8
+  } catch { Write-Log "WARN could not update history: $($_.Exception.Message)" }
 }
 function Get-IdleSeconds {
   Add-Type @"
@@ -75,14 +101,51 @@ function Invoke-FfmpegWithHeartbeat([string[]]$Arguments,[hashtable]$State) {
   }
 }
 function Convert-One([IO.FileInfo]$File,[bool]$OverrideActive) {
-  $mode=Get-Mode $File.FullName; if($mode -eq 'skip'){return $false}; $relative=$File.FullName.Substring($MediaRoot.Length).TrimStart('\'); $relativeDir=Split-Path $relative -Parent; $baseName=[IO.Path]::GetFileNameWithoutExtension($File.Name); $tempDir=Join-Path $WorkRoot ([Guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Force $tempDir|Out-Null; $tempOutput=Join-Path $tempDir "$baseName.mp4"; $destDir=if($relativeDir){Join-Path $MediaRoot $relativeDir}else{$MediaRoot}; $dest=Join-Path $destDir "$baseName.mp4"; $archiveDir=if($relativeDir){Join-Path $MediaRoot (Join-Path '.constants-hub\originals' $relativeDir)}else{Join-Path $MediaRoot '.constants-hub\originals'}; New-Item -ItemType Directory -Force $archiveDir|Out-Null
+  $mode=Get-Mode $File.FullName; if($mode -eq 'skip'){return $false}
+  $relative=$File.FullName.Substring($MediaRoot.Length).TrimStart('\')
+  $relativeDir=Split-Path $relative -Parent
+  $baseName=[IO.Path]::GetFileNameWithoutExtension($File.Name)
+  $tempDir=Join-Path $WorkRoot ([Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Force $tempDir|Out-Null
+  $tempOutput=Join-Path $tempDir "$baseName.mp4"
+  $destDir=if($relativeDir){Join-Path $MediaRoot $relativeDir}else{$MediaRoot}
+  $dest=Join-Path $destDir "$baseName.mp4"
+  $archiveDir=if($relativeDir){Join-Path $MediaRoot (Join-Path '.constants-hub\originals' $relativeDir)}else{Join-Path $MediaRoot '.constants-hub\originals'}
+  New-Item -ItemType Directory -Force $archiveDir|Out-Null
   if(Test-Path -LiteralPath $dest){Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue; return $false}
-  $activeState=@{status='converting';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive}
-  Save-State $activeState; Write-Log "START [$mode] $($File.FullName)"
-  if($mode -eq 'transcode'){$args=@('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)}elseif($mode -eq 'audio'){$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)}else{$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','copy','-movflags','+faststart',$tempOutput)}
-  Invoke-FfmpegWithHeartbeat $args $activeState
-  if(!(Test-Output $tempOutput)){throw "verification failed for $tempOutput"}; Save-State @{status='copying';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive}; Copy-Item -LiteralPath $tempOutput -Destination $dest -Force; if(!(Test-Output $dest)){Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue; throw "NAS copy verification failed for $dest"}
-  $archived=Join-Path $archiveDir $File.Name; if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}; Move-Item -LiteralPath $File.FullName -Destination $archived; Remove-Item -LiteralPath $tempDir -Recurse -Force; Save-State @{status='completed';source=$File.FullName;mode=$mode;output=$dest;archived=$archived;override=$OverrideActive}; Write-Log "DONE $dest"; return $true
+
+  $jobId=[Guid]::NewGuid().ToString('N')
+  $started=(Get-Date).ToString('o')
+  Update-History @{id=$jobId;source=$File.FullName;output=$dest;mode=$mode;status='converting';startedAt=$started}
+  $activeState=@{status='converting';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}
+  Save-State $activeState
+  Write-Log "START [$mode] $($File.FullName)"
+
+  try {
+    if($mode -eq 'transcode'){$args=@('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)}elseif($mode -eq 'audio'){$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)}else{$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','copy','-movflags','+faststart',$tempOutput)}
+    Invoke-FfmpegWithHeartbeat $args $activeState
+    if(!(Test-Output $tempOutput)){throw "verification failed for $tempOutput"}
+
+    Update-History @{id=$jobId;status='copying'}
+    Save-State @{status='copying';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}
+    Copy-Item -LiteralPath $tempOutput -Destination $dest -Force
+    if(!(Test-Output $dest)){Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue; throw "NAS copy verification failed for $dest"}
+
+    $archived=Join-Path $archiveDir $File.Name
+    if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}
+    Move-Item -LiteralPath $File.FullName -Destination $archived
+    Remove-Item -LiteralPath $tempDir -Recurse -Force
+    $completed=(Get-Date).ToString('o')
+    Update-History @{id=$jobId;status='completed';completedAt=$completed}
+    Save-State @{status='completed';source=$File.FullName;mode=$mode;output=$dest;archived=$archived;override=$OverrideActive;jobId=$jobId}
+    Write-Log "DONE $dest"
+    return $true
+  } catch {
+    $message=$_.Exception.Message
+    Update-History @{id=$jobId;status='failed';error=$message}
+    Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    throw
+  }
 }
 
 Write-Log "Worker starting. RunNow=$RunNow ForceWhenBusy=$ForceWhenBusy Once=$Once MediaRoot=$MediaRoot WorkRoot=$WorkRoot"
@@ -94,6 +157,11 @@ while($true){
   if((Test-Path -LiteralPath $LocalPauseFile) -or (Test-Path -LiteralPath $RemotePauseFile)){$siteOverride=$false; Save-State @{status='paused';override=$false}; Start-Sleep -Seconds 5; continue}
   if(Test-GpuBusy){$gpu=Get-GpuUtilization; Save-State @{status='waiting';reason="Gaming protection: sustained GPU load ($gpu%)";override=$siteOverride}; if($Once){break}; Start-Sleep -Seconds 10; continue}
   if(!$siteOverride){ if(!(In-Schedule)){Save-State @{status='waiting';reason='outside schedule';override=$false}; if($Once){break}; Start-Sleep -Seconds 5; continue}; if((Get-IdleSeconds) -lt ($IdleMinutes*60)){Save-State @{status='waiting';reason='PC active';override=$false}; if($Once){break}; Start-Sleep -Seconds 10; continue} }
-  $converted=$false; foreach($file in Get-Candidates){try{if(Convert-One $file $siteOverride){$converted=$true;break}}catch{Write-Log "ERROR $($file.FullName): $($_.Exception.Message)"; Save-State @{status='failed';source=$file.FullName;error=$_.Exception.Message;override=$siteOverride}; Start-Sleep -Seconds 10}}
-  if($Once){break}; if(!$converted){Save-State @{status='idle';reason='no incompatible files found';override=$siteOverride}; Start-Sleep -Seconds 10}
+  $converted=$false
+  foreach($file in Get-Candidates){
+    try { if(Convert-One $file $siteOverride){$converted=$true;break} }
+    catch { Write-Log "ERROR $($file.FullName): $($_.Exception.Message)"; Save-State @{status='failed';source=$file.FullName;error=$_.Exception.Message;override=$siteOverride}; Start-Sleep -Seconds 10 }
+  }
+  if($Once){break}
+  if(!$converted){Save-State @{status='idle';reason='no incompatible files found';override=$siteOverride}; Start-Sleep -Seconds 10}
 }
