@@ -18,11 +18,28 @@ Unblock-File -LiteralPath $worker -ErrorAction SilentlyContinue
 $taskName = 'Constants Hub Overnight Converter'
 $arguments = "-NoProfile -ExecutionPolicy RemoteSigned -File `"$worker`" -MediaRoot `"$MediaRoot`" -WorkRoot `"$WorkRoot`" -StartHour 0 -EndHour 7 -IdleMinutes 15"
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
-$trigger = New-ScheduledTaskTrigger -Daily -At 12:00AM
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Hours 7) -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description 'Constants Hub RTX NVENC overnight media conversion worker.' -Force | Out-Null
+$startupTrigger = New-ScheduledTaskTrigger -AtStartup
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$midnightSafetyTrigger = New-ScheduledTaskTrigger -Daily -At 12:00AM
+$settings = New-ScheduledTaskSettingsSet `
+  -StartWhenAvailable `
+  -WakeToRun `
+  -ExecutionTimeLimit ([TimeSpan]::Zero) `
+  -MultipleInstances IgnoreNew `
+  -RestartCount 10 `
+  -RestartInterval (New-TimeSpan -Minutes 1)
 
-Write-Host "Installed: $taskName"
+Register-ScheduledTask `
+  -TaskName $taskName `
+  -Action $action `
+  -Trigger @($startupTrigger,$logonTrigger,$midnightSafetyTrigger) `
+  -Settings $settings `
+  -Description 'Constants Hub always-on CAZ-PC media conversion listener. Conversion work still follows overnight/idle rules unless Convert Now is requested.' `
+  -Force | Out-Null
+
+Start-ScheduledTask -TaskName $taskName
+Write-Host "Installed and started: $taskName"
 Write-Host "Worker: $worker"
 Write-Host "Temp: $WorkRoot"
-Write-Host 'The scheduled task can wake Windows from sleep. Starting from a full shutdown requires BIOS RTC wake or Wake-on-LAN.'
+Write-Host 'The listener now starts at Windows startup/logon, retries after crashes, and stays alive so the website controls are one-click.'
+Write-Host 'Conversion still follows midnight-7AM idle rules unless the site enables a daytime override.'
