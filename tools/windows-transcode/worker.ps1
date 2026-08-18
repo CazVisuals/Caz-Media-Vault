@@ -24,13 +24,27 @@ $RemotePauseFile = Join-Path $ControlRoot 'PAUSE'
 $RemoteRunFile = Join-Path $ControlRoot 'RUN_NOW'
 
 New-Item -ItemType Directory -Force $WorkRoot,$ControlRoot | Out-Null
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$script:HeartbeatSequence = 0
 
-function Write-Log([string]$Message) { $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $Message"; Add-Content -Path $LogFile -Value $line; Write-Host $line }
+function Write-Log([string]$Message) {
+  $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $Message"
+  Add-Content -Path $LogFile -Value $line
+  Write-Host $line
+}
+function Write-AtomicJson([string]$Path,[string]$Json) {
+  $temp = "$Path.$PID.tmp"
+  [IO.File]::WriteAllText($temp,$Json,$Utf8NoBom)
+  Move-Item -LiteralPath $temp -Destination $Path -Force
+}
 function Save-State([hashtable]$State) {
-  $State.updatedAt = (Get-Date).ToString('o'); $State.computer = $env:COMPUTERNAME
-  $json = $State | ConvertTo-Json -Depth 5
-  $json | Set-Content -Path $StateFile -Encoding UTF8
-  try { $json | Set-Content -Path $ControlStatus -Encoding UTF8 } catch {}
+  $script:HeartbeatSequence++
+  $State.updatedAt = (Get-Date).ToString('o')
+  $State.computer = $env:COMPUTERNAME
+  $State.heartbeat = $script:HeartbeatSequence
+  $json = $State | ConvertTo-Json -Depth 6
+  [IO.File]::WriteAllText($StateFile,$json,$Utf8NoBom)
+  try { Write-AtomicJson $ControlStatus $json } catch { Write-Log "WARN could not publish status: $($_.Exception.Message)" }
 }
 function Read-History {
   try {
@@ -54,7 +68,8 @@ function Update-History([hashtable]$Job) {
       $record | Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force
       $history = @($record) + $history
     }
-    @($history | Select-Object -First 250) | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $HistoryFile -Encoding UTF8
+    $json = @($history | Select-Object -First 250) | ConvertTo-Json -Depth 6
+    Write-AtomicJson $HistoryFile $json
   } catch { Write-Log "WARN could not update history: $($_.Exception.Message)" }
 }
 function Get-IdleSeconds {
