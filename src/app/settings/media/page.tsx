@@ -37,6 +37,9 @@ function normalized(value: string) {
 function sourceMatches(relativePath: string, source: string) {
   return normalized(source).endsWith(normalized(relativePath));
 }
+function sameSource(left: string, right: string) {
+  return normalized(left) === normalized(right) || normalized(left).endsWith(normalized(right)) || normalized(right).endsWith(normalized(left));
+}
 function displaySource(source: string) {
   const marker = "\\video\\";
   const lower = source.toLowerCase();
@@ -153,8 +156,8 @@ export default function MediaToolsPage() {
   const pc = pcWorker?.status;
   const history = pcWorker?.history || [];
   const completedHistory = history.filter((job) => job.status === "completed");
-  const historyFailures = history.filter((job) => job.status === "failed");
-  const liveFailedJob: PcJob | null = pc?.status === "failed" && pc.source
+  const historyFailures = history.filter((job) => job.status === "failed" && !completedHistory.some((completed) => sameSource(completed.source, job.source)));
+  const liveFailedJob: PcJob | null = pc?.status === "failed" && pc.source && !completedHistory.some((completed) => sameSource(completed.source, pc.source!))
     ? {
         id: pc.jobId || `live-failed-${pc.source}`,
         source: pc.source,
@@ -165,7 +168,7 @@ export default function MediaToolsPage() {
         updatedAt: pc.updatedAt,
       }
     : null;
-  const failedHistory = liveFailedJob && !historyFailures.some((job) => job.id === liveFailedJob.id || sourceMatches(displaySource(job.source), liveFailedJob.source))
+  const failedHistory = liveFailedJob && !historyFailures.some((job) => job.id === liveFailedJob.id || sameSource(job.source, liveFailedJob.source))
     ? [liveFailedJob, ...historyFailures]
     : historyFailures;
   const rawPending = items.filter((item) => item.probe && !item.probe.mobileCompatible);
