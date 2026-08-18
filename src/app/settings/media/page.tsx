@@ -6,49 +6,15 @@ import type { Movie } from "@/lib/media/types";
 import type { MediaProbe } from "@/lib/media/probe";
 
 type Inspection = { movie: Movie; probe?: MediaProbe; error?: string };
-type PcWorkerStatus = {
-  status?: string;
-  reason?: string;
-  source?: string;
-  output?: string;
-  mode?: string;
-  updatedAt?: string;
-  computer?: string;
-  override?: boolean;
-  jobId?: string;
-  error?: string;
-};
-type PcJob = {
-  id: string;
-  source: string;
-  output?: string;
-  mode?: string;
-  status: "converting" | "copying" | "completed" | "failed";
-  error?: string;
-  startedAt?: string;
-  updatedAt?: string;
-  completedAt?: string;
-};
+type PcWorkerStatus = { status?: string; reason?: string; source?: string; output?: string; mode?: string; updatedAt?: string; computer?: string; override?: boolean; jobId?: string; error?: string; };
+type PcJob = { id: string; source: string; output?: string; mode?: string; status: "converting" | "copying" | "completed" | "failed"; error?: string; startedAt?: string; updatedAt?: string; completedAt?: string; };
 type PcWorker = { success: boolean; enabled?: boolean; status?: PcWorkerStatus | null; history?: PcJob[]; error?: string };
 
-function normalized(value: string) {
-  return value.replace(/\//g, "\\").toLowerCase();
-}
-function sourceMatches(relativePath: string, source: string) {
-  return normalized(source).endsWith(normalized(relativePath));
-}
-function sameSource(left: string, right: string) {
-  return normalized(left) === normalized(right) || normalized(left).endsWith(normalized(right)) || normalized(right).endsWith(normalized(left));
-}
-function displaySource(source: string) {
-  const marker = "\\video\\";
-  const lower = source.toLowerCase();
-  const index = lower.indexOf(marker);
-  return index >= 0 ? source.slice(index + marker.length) : source.split("\\").pop() || source;
-}
-function modeLabel(mode?: string) {
-  return mode === "remux" ? "Quick remux" : mode === "audio" || mode === "audio-convert" ? "Audio conversion" : mode === "transcode" ? "RTX NVENC" : "Conversion";
-}
+function normalized(value: string) { return value.replace(/\//g, "\\").toLowerCase(); }
+function sourceMatches(relativePath: string, source: string) { return normalized(source).endsWith(normalized(relativePath)); }
+function sameSource(left: string, right: string) { return normalized(left) === normalized(right) || normalized(left).endsWith(normalized(right)) || normalized(right).endsWith(normalized(left)); }
+function displaySource(source: string) { const marker = "\\video\\"; const lower = source.toLowerCase(); const index = lower.indexOf(marker); return index >= 0 ? source.slice(index + marker.length) : source.split("\\").pop() || source; }
+function modeLabel(mode?: string) { return mode === "remux" ? "Quick remux" : mode === "audio" || mode === "audio-convert" ? "Audio conversion" : mode === "transcode" ? "RTX NVENC" : "Conversion"; }
 
 export default function MediaToolsPage() {
   const [items, setItems] = useState<Inspection[]>([]);
@@ -59,8 +25,6 @@ export default function MediaToolsPage() {
   const [pcBusy, setPcBusy] = useState(false);
   const [pcMessage, setPcMessage] = useState("");
   const libraryRefreshInFlight = useRef(false);
-  const previousJobId = useRef("");
-  const previousStatus = useRef("");
 
   async function refreshLibrary() {
     if (libraryRefreshInFlight.current) return;
@@ -74,14 +38,10 @@ export default function MediaToolsPage() {
           const probeResponse = await fetch(`/api/media/inspect?path=${encodeURIComponent(movie.relativePath)}`, { cache: "no-store" });
           const probeResult = await probeResponse.json() as { probe?: MediaProbe; error?: string };
           return probeResponse.ok && probeResult.probe ? { movie, probe: probeResult.probe } : { movie, error: probeResult.error || "Inspection failed." };
-        } catch {
-          return { movie, error: "Inspection failed." };
-        }
+        } catch { return { movie, error: "Inspection failed." }; }
       }));
       setItems(inspections);
-    } finally {
-      libraryRefreshInFlight.current = false;
-    }
+    } finally { libraryRefreshInFlight.current = false; }
   }
 
   async function refreshPc() {
@@ -91,86 +51,41 @@ export default function MediaToolsPage() {
     setPcWorker(result);
     const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
     setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
-
-    const jobId = result.status?.jobId || "";
-    const status = result.status?.status || "";
-    const finished = status === "completed" || status === "failed";
-    const changedJob = Boolean(jobId && previousJobId.current && jobId !== previousJobId.current);
-    const changedToFinished = finished && previousStatus.current !== status;
-    if (changedJob || changedToFinished) void refreshLibrary().catch(() => undefined);
-    previousJobId.current = jobId;
-    previousStatus.current = status;
   }
 
   useEffect(() => {
     let active = true;
     async function load() {
-      try {
-        await Promise.all([refreshLibrary(), refreshPc()]);
-      } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "Media inspection failed.");
-      } finally {
-        if (active) setLoading(false);
-      }
+      try { await Promise.all([refreshLibrary(), refreshPc()]); }
+      catch (reason) { if (active) setError(reason instanceof Error ? reason.message : "Media inspection failed."); }
+      finally { if (active) setLoading(false); }
     }
     void load();
     const pcInterval = window.setInterval(() => { if (active) void refreshPc(); }, 3000);
-    const libraryInterval = window.setInterval(() => { if (active) void refreshLibrary().catch(() => undefined); }, 30000);
-    return () => {
-      active = false;
-      window.clearInterval(pcInterval);
-      window.clearInterval(libraryInterval);
-    };
+    return () => { active = false; window.clearInterval(pcInterval); };
   }, []);
 
   async function pcCommand(action: "enable" | "run-now" | "pause" | "resume" | "stop" | "clear-completed" | "clear-failed") {
-    setPcBusy(true);
-    setPcMessage("");
-    setError("");
+    setPcBusy(true); setPcMessage(""); setError("");
     try {
-      const response = await fetch("/api/admin/pc-worker", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
+      const response = await fetch("/api/admin/pc-worker", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
       const result = await response.json() as PcWorker;
       if (!response.ok || !result.success) throw new Error(result.error || "PC worker command failed.");
       setPcWorker(result);
       const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
       setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
-      setPcMessage(
-        action === "run-now" ? "Convert Now sent to CAZ-PC." :
-        action === "pause" ? "Pause sent to CAZ-PC." :
-        action === "resume" ? "Resume sent to CAZ-PC." :
-        action === "clear-completed" ? "Completed history cleared." :
-        action === "clear-failed" ? "Failed history cleared." : "PC worker enabled.",
-      );
+      setPcMessage(action === "run-now" ? "Convert Now sent to CAZ-PC." : action === "pause" ? "Pause sent to CAZ-PC." : action === "resume" ? "Resume sent to CAZ-PC." : action === "clear-completed" ? "Completed history cleared." : action === "clear-failed" ? "Failed history cleared." : "PC worker enabled.");
       window.setTimeout(() => void refreshPc(), 1200);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "PC worker command failed.");
-    } finally {
-      setPcBusy(false);
-    }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "PC worker command failed."); }
+    finally { setPcBusy(false); }
   }
 
   const pc = pcWorker?.status;
   const history = pcWorker?.history || [];
   const completedHistory = history.filter((job) => job.status === "completed");
   const historyFailures = history.filter((job) => job.status === "failed" && !completedHistory.some((completed) => sameSource(completed.source, job.source)));
-  const liveFailedJob: PcJob | null = pc?.status === "failed" && pc.source && !completedHistory.some((completed) => sameSource(completed.source, pc.source!))
-    ? {
-        id: pc.jobId || `live-failed-${pc.source}`,
-        source: pc.source,
-        output: pc.output,
-        mode: pc.mode,
-        status: "failed",
-        error: pc.error || pc.reason || "CAZ-PC reported a conversion failure.",
-        updatedAt: pc.updatedAt,
-      }
-    : null;
-  const failedHistory = liveFailedJob && !historyFailures.some((job) => job.id === liveFailedJob.id || sameSource(job.source, liveFailedJob.source))
-    ? [liveFailedJob, ...historyFailures]
-    : historyFailures;
+  const liveFailedJob: PcJob | null = pc?.status === "failed" && pc.source && !completedHistory.some((completed) => sameSource(completed.source, pc.source!)) ? { id: pc.jobId || `live-failed-${pc.source}`, source: pc.source, output: pc.output, mode: pc.mode, status: "failed", error: pc.error || pc.reason || "CAZ-PC reported a conversion failure.", updatedAt: pc.updatedAt } : null;
+  const failedHistory = liveFailedJob && !historyFailures.some((job) => job.id === liveFailedJob.id || sameSource(job.source, liveFailedJob.source)) ? [liveFailedJob, ...historyFailures] : historyFailures;
   const rawPending = items.filter((item) => item.probe && !item.probe.mobileCompatible);
   const pending = rawPending.filter((item) => !completedHistory.some((job) => sourceMatches(item.movie.relativePath, job.source)));
   const total = items.filter((item) => item.probe).length;
@@ -179,73 +94,21 @@ export default function MediaToolsPage() {
   const currentSource = pc?.source || "";
   const currentFile = currentSource.split("\\").pop() || "";
   const workerLabel = !pcOnline ? "Offline" : pc?.status === "converting" ? "Converting" : pc?.status === "copying" ? "Copying to NAS" : pc?.status === "failed" ? "Failed" : pc?.status === "paused" ? "Paused" : pc?.status === "waiting" ? "Connected / waiting" : pc?.status || "Connected";
-  const activeMode = modeLabel(pc?.mode);
 
   return <main className="admin-shell">
-    <header className="admin-header">
-      <div><Link href="/settings">← System Status</Link><p className="eyebrow">MEDIA HEALTH</p><h1>Compatibility & Conversion</h1></div>
-      <div className="conversion-controls">
-        <button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("pause")}>Ⅱ Pause</button>
-        <button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("resume")}>▶ Resume</button>
-        <button className="primary-button" disabled={pcBusy || !pcWorker?.enabled || !pcOnline} onClick={() => void pcCommand("run-now")}>{pcBusy ? "Sending…" : `Convert now (${pending.length})`}</button>
-      </div>
-    </header>
+    <header className="admin-header"><div><Link href="/settings">← System Status</Link><p className="eyebrow">MEDIA HEALTH</p><h1>Compatibility & Conversion</h1></div><div className="conversion-controls"><button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("pause")}>Ⅱ Pause</button><button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("resume")}>▶ Resume</button><button className="primary-button" disabled={pcBusy || !pcWorker?.enabled || !pcOnline} onClick={() => void pcCommand("run-now")}>{pcBusy ? "Sending…" : `Convert now (${pending.length})`}</button></div></header>
 
-    <section className="admin-panel">
-      <div className="queue-heading">
-        <div><p className="eyebrow">CAZ-PC CONVERSION WORKER</p><h2>{workerLabel}</h2></div>
-        <span className={pcOnline ? "status-good" : "status-neutral"}>{pcOnline ? pc?.computer || "PC connected" : "Waiting for PC"}</span>
-      </div>
-      <div className="queue-overall"><span style={{ width: `${readyPercent}%` }} /></div>
-      <p><strong>{ready} of {total}</strong> inspected files are confirmed mobile ready · <strong>{pending.length}</strong> remaining.</p>
-      <p>{pcOnline ? pc?.status === "failed" ? (pc.error || pc.reason || "The current conversion failed.") : pc?.reason ? `${pc.reason}.` : pc?.override ? "Daytime Convert Now override is active." : "Worker is connected and ready." : "The site has not received a fresh heartbeat from the Windows worker."}</p>
-      {currentFile ? <p><strong>Current file:</strong> {currentFile} · {activeMode}</p> : null}
-      {pc?.updatedAt ? <small>Last heartbeat: {new Date(pc.updatedAt).toLocaleTimeString()}</small> : null}
-      {!pcWorker?.enabled ? <div className="hero-actions"><button className="secondary-button" disabled={pcBusy} onClick={() => void pcCommand("enable")}>Enable PC Worker</button></div> : null}
-      {pcMessage ? <p className="artwork-ready">{pcMessage}</p> : null}
-    </section>
+    <section className="admin-panel"><div className="queue-heading"><div><p className="eyebrow">CAZ-PC CONVERSION WORKER</p><h2>{workerLabel}</h2></div><span className={pcOnline ? "status-good" : "status-neutral"}>{pcOnline ? pc?.computer || "PC connected" : "Waiting for PC"}</span></div><div className="queue-overall"><span style={{ width: `${readyPercent}%` }} /></div><p><strong>{ready} of {total}</strong> last-scanned files are confirmed mobile ready · <strong>{pending.length}</strong> remaining.</p><p>{pcOnline ? pc?.status === "failed" ? (pc.error || pc.reason || "The current conversion failed.") : pc?.reason ? `${pc.reason}.` : pc?.override ? "Daytime Convert Now override is active." : "Worker is connected and ready." : "The site has not received a fresh heartbeat from the Windows worker."}</p>{currentFile ? <p><strong>Current file:</strong> {currentFile} · {modeLabel(pc?.mode)}</p> : null}{pc?.updatedAt ? <small>Last heartbeat: {new Date(pc.updatedAt).toLocaleTimeString()}</small> : null}<div className="hero-actions"><button className="secondary-button" disabled={libraryRefreshInFlight.current} onClick={() => void refreshLibrary().catch(() => undefined)}>Refresh compatibility scan</button>{!pcWorker?.enabled ? <button className="secondary-button" disabled={pcBusy} onClick={() => void pcCommand("enable")}>Enable PC Worker</button> : null}</div>{pcMessage ? <p className="artwork-ready">{pcMessage}</p> : null}</section>
 
-    {error ? <div className="state-card error">{error}</div> : null}
-    {loading ? <div className="state-card">Inspecting your library…</div> : null}
+    {error ? <div className="state-card error">{error}</div> : null}{loading ? <div className="state-card">Inspecting your library…</div> : null}
 
-    {!loading ? <section className="admin-panel">
-      <div className="queue-heading">
-        <div><p className="eyebrow">CAZ-PC QUEUE</p><h2>{pending.length ? `${pending.length} waiting for conversion` : "All inspected media is ready"}</h2></div>
-        <div className="queue-actions">
-          <button className="secondary-button" disabled={pcBusy || completedHistory.length === 0} onClick={() => void pcCommand("clear-completed")}>Clear completed</button>
-          <button className="secondary-button" disabled={pcBusy || failedHistory.length === 0} onClick={() => void pcCommand("clear-failed")}>Clear failed</button>
-        </div>
-      </div>
+    {!loading ? <section className="admin-panel"><div className="queue-heading"><div><p className="eyebrow">CAZ-PC QUEUE</p><h2>{pending.length ? `${pending.length} waiting for conversion` : "All last-scanned media is ready"}</h2></div><div className="queue-actions"><button className="secondary-button" disabled={pcBusy || completedHistory.length === 0} onClick={() => void pcCommand("clear-completed")}>Clear completed</button><button className="secondary-button" disabled={pcBusy || failedHistory.length === 0} onClick={() => void pcCommand("clear-failed")}>Clear failed</button></div></div>
+      {pending.map(({ movie, probe }) => { const isCurrent = Boolean(currentSource && sourceMatches(movie.relativePath, currentSource)); const isFailed = isCurrent && pc?.status === "failed"; const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? "Converting" : "Queued"; const statusClass = isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued"; return <div className="queue-row" key={movie.id}><div><strong>{movie.relativePath}</strong><small>{isFailed ? (pc?.error || pc?.reason || modeLabel(probe?.conversionMode || undefined)) : modeLabel(probe?.conversionMode || undefined)}</small></div><span className={statusClass}>{label}</span><div className="job-progress"><span style={{ width: "0%" }} /></div></div>; })}
+      {completedHistory.map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{modeLabel(job.mode)}</small></div><span className="queue-completed">Completed</span><div className="job-progress"><span style={{ width: "100%" }} /></div></div>)}
+      {failedHistory.filter((job) => !pending.some((item) => sourceMatches(item.movie.relativePath, job.source))).map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{job.error || modeLabel(job.mode)}</small></div><span className="queue-failed">Failed</span><div className="job-progress"><span style={{ width: "0%" }} /></div></div>)}
+      {!pending.length && !completedHistory.length && !failedHistory.length ? <div className="state-card"><strong>Queue complete</strong><small>CAZ-PC has no incompatible files waiting in the last scan.</small></div> : null}</section> : null}
 
-      {pending.map(({ movie, probe }) => {
-        const isCurrent = Boolean(currentSource && sourceMatches(movie.relativePath, currentSource));
-        const isFailed = isCurrent && pc?.status === "failed";
-        const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? "Converting" : "Queued";
-        const statusClass = isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued";
-        return <div className="queue-row" key={movie.id}>
-          <div><strong>{movie.relativePath}</strong><small>{isFailed ? (pc?.error || pc?.reason || modeLabel(probe?.conversionMode || undefined)) : modeLabel(probe?.conversionMode || undefined)}</small></div>
-          <span className={statusClass}>{label}</span>
-          <div className="job-progress"><span style={{ width: "0%" }} /></div>
-        </div>;
-      })}
-
-      {completedHistory.map((job) => <div className="queue-row" key={job.id}>
-        <div><strong>{displaySource(job.source)}</strong><small>{modeLabel(job.mode)}</small></div>
-        <span className="queue-completed">Completed</span>
-        <div className="job-progress"><span style={{ width: "100%" }} /></div>
-      </div>)}
-
-      {failedHistory.filter((job) => !pending.some((item) => sourceMatches(item.movie.relativePath, job.source))).map((job) => <div className="queue-row" key={job.id}>
-        <div><strong>{displaySource(job.source)}</strong><small>{job.error || modeLabel(job.mode)}</small></div>
-        <span className="queue-failed">Failed</span>
-        <div className="job-progress"><span style={{ width: "0%" }} /></div>
-      </div>)}
-
-      {!pending.length && !completedHistory.length && !failedHistory.length ? <div className="state-card"><strong>Queue complete</strong><small>CAZ-PC has no incompatible files waiting.</small></div> : null}
-    </section> : null}
-
-    <p className="overview">CAZ-PC is the only conversion engine. A job is marked Completed only after the MP4 is verified on the NAS and the original is archived. The compatibility list below independently FFprobes the files currently on the NAS.</p>
-
+    <p className="overview">CAZ-PC is the only conversion engine. Worker history updates the queue without repeatedly FFprobing the entire NAS. Full compatibility scans are now manual here and should be used for periodic maintenance; completed jobs remain authoritative after NAS verification.</p>
     <section className="organizer-list">{items.map(({ movie, probe, error: inspectError }) => <article className="media-health-card" key={movie.id}><div><h2>{movie.title}</h2><p>{movie.fileName}</p></div>{probe ? <><div className="codec-list"><span>{probe.container}</span><span>Video: {probe.videoCodec || "unknown"}</span><span>Audio: {probe.audioCodec || "none"}</span>{probe.width ? <span>{probe.width}×{probe.height}</span> : null}</div><strong className={probe.mobileCompatible ? "status-good" : "status-neutral"}>{probe.mobileCompatible ? "Mobile ready" : probe.conversionMode === "remux" ? "Quick remux" : probe.conversionMode === "audio-convert" ? "Fast audio fix" : "Full conversion"}</strong></> : <span className="state-card error">{inspectError}</span>}</article>)}</section>
   </main>;
 }
