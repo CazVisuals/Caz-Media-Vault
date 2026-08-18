@@ -20,6 +20,18 @@ type PcJob = {
   completedAt?: string;
 };
 
+type MaintenanceReport = {
+  status?: string;
+  startedAt?: string;
+  completedAt?: string;
+  scanned?: number;
+  mobileReady?: number;
+  incompatible?: number;
+  probeErrors?: number;
+  exactDuplicatesRemoved?: number;
+  duplicatePolicy?: string;
+};
+
 async function controlRoot() {
   const mediaRoot = await fs.realpath(getMediaRoot());
   const root = path.join(mediaRoot, ".constants-hub", "pc-worker");
@@ -37,13 +49,9 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
   }
 }
 
-async function readStatus(root: string) {
-  return readJson<Record<string, unknown> | null>(path.join(root, "status.json"), null);
-}
-
-async function readHistory(root: string) {
-  return readJson<PcJob[]>(path.join(root, "history.json"), []);
-}
+async function readStatus(root: string) { return readJson<Record<string, unknown> | null>(path.join(root, "status.json"), null); }
+async function readHistory(root: string) { return readJson<PcJob[]>(path.join(root, "history.json"), []); }
+async function readMaintenance(root: string) { return readJson<MaintenanceReport | null>(path.join(root, "maintenance.json"), null); }
 
 async function writeHistory(root: string, jobs: PcJob[]) {
   const file = path.join(root, "history.json");
@@ -52,12 +60,16 @@ async function writeHistory(root: string, jobs: PcJob[]) {
   await fs.rename(temp, file);
 }
 
-async function writeCommand(root: string, name: string) {
-  await fs.writeFile(path.join(root, name), new Date().toISOString(), "utf8");
-}
+async function writeCommand(root: string, name: string) { await fs.writeFile(path.join(root, name), new Date().toISOString(), "utf8"); }
 
 async function payload(root: string, enabled: boolean) {
-  return { success: true, enabled, status: await readStatus(root), history: await readHistory(root) };
+  return {
+    success: true,
+    enabled,
+    status: await readStatus(root),
+    history: await readHistory(root),
+    maintenance: await readMaintenance(root),
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -84,7 +96,7 @@ export async function POST(request: NextRequest) {
       return Response.json(await payload(root, enabled));
     }
 
-    if (["enable", "run-now", "pause", "resume", "stop"].includes(action)) {
+    if (["enable", "run-now", "pause", "resume", "stop", "end-override", "run-maintenance"].includes(action)) {
       await fs.writeFile(path.join(root, "enabled"), new Date().toISOString(), "utf8");
       await pauseConversions();
     }
@@ -93,6 +105,10 @@ export async function POST(request: NextRequest) {
     if (action === "run-now") {
       await fs.rm(path.join(root, "PAUSE"), { force: true });
       await writeCommand(root, "RUN_NOW");
+    } else if (action === "end-override") {
+      await writeCommand(root, "END_OVERRIDE");
+    } else if (action === "run-maintenance") {
+      await writeCommand(root, "RUN_MAINTENANCE");
     } else if (action === "pause") {
       await writeCommand(root, "PAUSE");
     } else if (action === "resume") {
