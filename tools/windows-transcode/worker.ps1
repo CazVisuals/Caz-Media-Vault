@@ -7,7 +7,7 @@ param(
   [int]$StartHour = 0,
   [int]$EndHour = 7,
   [int]$IdleMinutes = 15,
-  [int]$GpuBusyThreshold = 35
+  [int]$GpuBusyThreshold = 65
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,6 +44,15 @@ public static class IdleTime {
   return [IdleTime]::Seconds()
 }
 function Get-GpuUtilization { try { $value = & nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>$null | Select-Object -First 1; if ($LASTEXITCODE -ne 0) { return 0 }; return [int]($value.Trim()) } catch { return 0 } }
+function Test-GpuBusy {
+  if($ForceWhenBusy){return $false}
+  # Ignore brief browser/video/desktop GPU spikes. Treat the PC as gaming only
+  # when GPU load stays high for three samples across roughly four seconds.
+  $samples=@()
+  1..3 | ForEach-Object { $samples += Get-GpuUtilization; if($_ -lt 3){Start-Sleep -Seconds 2} }
+  $busy = ($samples | Where-Object { $_ -ge $GpuBusyThreshold }).Count -eq 3
+  return $busy
+}
 function In-Schedule { $hour=(Get-Date).Hour; if($StartHour -lt $EndHour){return $hour -ge $StartHour -and $hour -lt $EndHour}; return $hour -ge $StartHour -or $hour -lt $EndHour }
 function Get-Probe([string]$Path) { $json=& ffprobe -v error -show_entries format=format_name:stream=index,codec_type,codec_name,pix_fmt -of json -- "$Path"; if($LASTEXITCODE -ne 0){throw "ffprobe failed for $Path"}; return $json|ConvertFrom-Json }
 function Get-Mode([string]$Path) { $probe=Get-Probe $Path; $video=$probe.streams|Where-Object codec_type -eq 'video'|Select-Object -First 1; $audio=$probe.streams|Where-Object codec_type -eq 'audio'|Select-Object -First 1; $extension=[IO.Path]::GetExtension($Path).ToLowerInvariant(); $videoOk=$video -and $video.codec_name -eq 'h264' -and (!$video.pix_fmt -or $video.pix_fmt -eq 'yuv420p'); $audioOk=!$audio -or $audio.codec_name -eq 'aac'; if($extension -eq '.mp4' -and $videoOk -and $audioOk){return 'skip'}; if($videoOk -and $audioOk){return 'remux'}; if($videoOk){return 'audio'}; return 'transcode' }
@@ -69,7 +78,7 @@ while($true){
   if((Test-Path -LiteralPath $LocalStopFile) -or (Test-Path -LiteralPath $RemoteStopFile)){Remove-Item -LiteralPath $RemoteStopFile -Force -ErrorAction SilentlyContinue; Write-Log 'STOP command detected. Exiting.'; Save-State @{status='stopped';override=$false}; break}
   if(Test-Path -LiteralPath $RemoteRunFile){Remove-Item -LiteralPath $RemoteRunFile -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $RemotePauseFile -Force -ErrorAction SilentlyContinue; $siteOverride=$true; Write-Log 'Convert Now command detected. Daytime override enabled.'}
   if((Test-Path -LiteralPath $LocalPauseFile) -or (Test-Path -LiteralPath $RemotePauseFile)){$siteOverride=$false; Save-State @{status='paused';override=$false}; Start-Sleep -Seconds 5; continue}
-  $gpu=Get-GpuUtilization; if(!$ForceWhenBusy -and $gpu -ge $GpuBusyThreshold){Save-State @{status='waiting';reason="GPU busy at $gpu%";override=$siteOverride}; if($Once){break}; Start-Sleep -Seconds 10; continue}
+  if(Test-GpuBusy){$gpu=Get-GpuUtilization; Save-State @{status='waiting';reason="Gaming protection: sustained GPU load ($gpu%)";override=$siteOverride}; if($Once){break}; Start-Sleep -Seconds 10; continue}
   if(!$siteOverride){ if(!(In-Schedule)){Save-State @{status='waiting';reason='outside schedule';override=$false}; if($Once){break}; Start-Sleep -Seconds 5; continue}; if((Get-IdleSeconds) -lt ($IdleMinutes*60)){Save-State @{status='waiting';reason='PC active';override=$false}; if($Once){break}; Start-Sleep -Seconds 10; continue} }
   $converted=$false; foreach($file in Get-Candidates){try{if(Convert-One $file){$converted=$true;break}}catch{Write-Log "ERROR $($file.FullName): $($_.Exception.Message)"; Save-State @{status='failed';source=$file.FullName;error=$_.Exception.Message;override=$siteOverride}; Start-Sleep -Seconds 10}}
   if($Once){break}; if(!$converted){Save-State @{status='idle';reason='no incompatible files found';override=$siteOverride}; Start-Sleep -Seconds 10}
