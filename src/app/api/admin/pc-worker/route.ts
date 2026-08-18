@@ -17,7 +17,9 @@ async function controlRoot() {
 
 async function readStatus(root: string) {
   try {
-    return JSON.parse(await fs.readFile(path.join(root, "status.json"), "utf8")) as Record<string, unknown>;
+    const raw = await fs.readFile(path.join(root, "status.json"), "utf8");
+    const clean = raw.replace(/^\uFEFF/, "").trim();
+    return JSON.parse(clean) as Record<string, unknown>;
   } catch {
     return null;
   }
