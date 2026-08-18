@@ -1,0 +1,186 @@
+.automationCard {
+  margin: 1.4rem 0 0;
+  padding: 1.1rem 1.25rem;
+  display: flex;
+  align-items: flex-start;
+  gap: .85rem;
+  color: #dbeafe;
+  background: linear-gradient(135deg, rgba(37, 99, 235, .12), rgba(14, 165, 233, .06));
+  border: 1px solid rgba(96, 165, 250, .25);
+  border-radius: 1rem;
+}
+
+.automationIcon {
+  color: #60a5fa;
+  font-size: 1.2rem;
+}
+
+.automationCard strong,
+.automationCard span {
+  display: block;
+}
+
+.automationCard span {
+  margin-top: .3rem;
+  color: #9aa3b2;
+  line-height: 1.45;
+}
+
+.bulkBar {
+  position: sticky;
+  z-index: 8;
+  top: .75rem;
+  margin: 1.25rem 0 0;
+  padding: .9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  background: rgba(10, 14, 22, .94);
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 1rem;
+  box-shadow: 0 14px 45px rgba(0, 0, 0, .35);
+  backdrop-filter: blur(16px);
+}
+
+.bulkSummary {
+  min-width: 0;
+  display: grid;
+  gap: .2rem;
+}
+
+.bulkSummary strong {
+  font-size: .95rem;
+}
+
+.bulkSummary span {
+  color: #9aa3b2;
+  font-size: .8rem;
+}
+
+.bulkActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: .55rem;
+}
+
+.bulkButton,
+.bulkPrimary,
+.bulkDanger {
+  min-height: 44px;
+  padding: 0 1rem;
+  border-radius: .75rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bulkButton {
+  color: #fff;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .12);
+}
+
+.bulkPrimary {
+  color: #fff;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border: 1px solid rgba(147, 197, 253, .35);
+}
+
+.bulkDanger {
+  color: #fecaca;
+  background: rgba(239, 68, 68, .12);
+  border: 1px solid rgba(239, 68, 68, .28);
+}
+
+.bulkButton:disabled,
+.bulkPrimary:disabled,
+.bulkDanger:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.confirmCard {
+  margin-top: .75rem;
+  padding: 1rem 1.15rem;
+  color: #dbeafe;
+  background: rgba(37, 99, 235, .08);
+  border: 1px solid rgba(96, 165, 250, .22);
+  border-radius: .9rem;
+}
+
+.confirmCard strong {
+  display: block;
+  margin-bottom: .3rem;
+}
+
+.confirmCard span {
+  color: #9aa3b2;
+  line-height: 1.45;
+}
+
+.cardSelected {
+  border-color: rgba(59, 130, 246, .55) !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .12);
+}
+
+.checkWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.checkbox {
+  width: 21px;
+  height: 21px;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.progressText {
+  color: #93c5fd;
+}
+
+@media (min-width: 851px) {
+  .withSelection {
+    grid-template-columns: 28px 88px minmax(0, 1fr) minmax(0, 1.5fr) auto !important;
+  }
+}
+
+@media (max-width: 850px) {
+  .bulkBar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .bulkActions {
+    justify-content: stretch;
+  }
+
+  .bulkActions button {
+    flex: 1 1 auto;
+  }
+
+  .withSelection {
+    position: relative;
+    padding-left: 3.4rem !important;
+  }
+
+  .checkWrap {
+    position: absolute;
+    top: 1.45rem;
+    left: 1rem;
+  }
+}
+
+@media (max-width: 520px) {
+  .bulkActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .bulkPrimary {
+    grid-column: 1 / -1;
+  }
+}
