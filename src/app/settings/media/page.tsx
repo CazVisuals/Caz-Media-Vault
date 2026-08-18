@@ -6,9 +6,10 @@ import type { Movie } from "@/lib/media/types";
 import type { MediaProbe } from "@/lib/media/probe";
 
 type Inspection = { movie: Movie; probe?: MediaProbe; error?: string };
-type PcWorkerStatus = { status?: string; reason?: string; source?: string; output?: string; mode?: string; updatedAt?: string; computer?: string; override?: boolean; jobId?: string; error?: string; };
+type PcWorkerStatus = { status?: string; reason?: string; source?: string; output?: string; mode?: string; updatedAt?: string; computer?: string; override?: boolean; jobId?: string; error?: string; workerVersion?: string; };
 type PcJob = { id: string; source: string; output?: string; mode?: string; status: "converting" | "copying" | "completed" | "failed"; error?: string; startedAt?: string; updatedAt?: string; completedAt?: string; };
-type PcWorker = { success: boolean; enabled?: boolean; status?: PcWorkerStatus | null; history?: PcJob[]; error?: string };
+type MaintenanceReport = { status?: string; startedAt?: string; completedAt?: string; scanned?: number; mobileReady?: number; incompatible?: number; probeErrors?: number; exactDuplicatesRemoved?: number; duplicatePolicy?: string; };
+type PcWorker = { success: boolean; enabled?: boolean; status?: PcWorkerStatus | null; history?: PcJob[]; maintenance?: MaintenanceReport | null; error?: string };
 
 function normalized(value: string) { return value.replace(/\//g, "\\").toLowerCase(); }
 function sourceMatches(relativePath: string, source: string) { return normalized(source).endsWith(normalized(relativePath)); }
@@ -65,7 +66,7 @@ export default function MediaToolsPage() {
     return () => { active = false; window.clearInterval(pcInterval); };
   }, []);
 
-  async function pcCommand(action: "enable" | "run-now" | "pause" | "resume" | "stop" | "clear-completed" | "clear-failed") {
+  async function pcCommand(action: "enable" | "run-now" | "pause" | "resume" | "stop" | "end-override" | "run-maintenance" | "clear-completed" | "clear-failed") {
     setPcBusy(true); setPcMessage(""); setError("");
     try {
       const response = await fetch("/api/admin/pc-worker", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
@@ -74,13 +75,22 @@ export default function MediaToolsPage() {
       setPcWorker(result);
       const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
       setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
-      setPcMessage(action === "run-now" ? "Convert Now sent to CAZ-PC." : action === "pause" ? "Pause sent to CAZ-PC." : action === "resume" ? "Resume sent to CAZ-PC." : action === "clear-completed" ? "Completed history cleared." : action === "clear-failed" ? "Failed history cleared." : "PC worker enabled.");
+      setPcMessage(
+        action === "run-now" ? "Daytime Convert Now enabled." :
+        action === "end-override" ? "Daytime override will end after the current file; overnight automation stays enabled." :
+        action === "run-maintenance" ? "Weekly-style maintenance sweep sent to CAZ-PC." :
+        action === "pause" ? "Worker paused." :
+        action === "resume" ? "Worker resumed with daytime override." :
+        action === "clear-completed" ? "Completed history cleared." :
+        action === "clear-failed" ? "Failed history cleared." : "PC worker enabled.",
+      );
       window.setTimeout(() => void refreshPc(), 1200);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "PC worker command failed."); }
     finally { setPcBusy(false); }
   }
 
   const pc = pcWorker?.status;
+  const maintenance = pcWorker?.maintenance;
   const history = pcWorker?.history || [];
   const completedHistory = history.filter((job) => job.status === "completed");
   const historyFailures = history.filter((job) => job.status === "failed" && !completedHistory.some((completed) => sameSource(completed.source, job.source)));
@@ -93,12 +103,35 @@ export default function MediaToolsPage() {
   const readyPercent = total ? Math.round((ready / total) * 100) : 0;
   const currentSource = pc?.source || "";
   const currentFile = currentSource.split("\\").pop() || "";
-  const workerLabel = !pcOnline ? "Offline" : pc?.status === "converting" ? "Converting" : pc?.status === "copying" ? "Copying to NAS" : pc?.status === "failed" ? "Failed" : pc?.status === "paused" ? "Paused" : pc?.status === "waiting" ? "Connected / waiting" : pc?.status || "Connected";
+  const workerLabel = !pcOnline ? "Offline" : pc?.status === "converting" ? "Converting" : pc?.status === "copying" ? "Copying to NAS" : pc?.status === "maintenance" ? "Weekly maintenance" : pc?.status === "failed" ? "Failed" : pc?.status === "paused" ? "Paused" : pc?.status === "waiting" ? "Connected / waiting" : pc?.status || "Connected";
 
   return <main className="admin-shell">
-    <header className="admin-header"><div><Link href="/settings">← System Status</Link><p className="eyebrow">MEDIA HEALTH</p><h1>Compatibility & Conversion</h1></div><div className="conversion-controls"><button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("pause")}>Ⅱ Pause</button><button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("resume")}>▶ Resume</button><button className="primary-button" disabled={pcBusy || !pcWorker?.enabled || !pcOnline} onClick={() => void pcCommand("run-now")}>{pcBusy ? "Sending…" : `Convert now (${pending.length})`}</button></div></header>
+    <header className="admin-header">
+      <div><Link href="/settings">← System Status</Link><p className="eyebrow">MEDIA HEALTH</p><h1>Compatibility & Conversion</h1></div>
+      <div className="conversion-controls">
+        {pc?.override ? <button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("end-override")}>End daytime override</button> : null}
+        <button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("pause")}>Ⅱ Pause worker</button>
+        <button className="secondary-button" disabled={pcBusy || !pcWorker?.enabled} onClick={() => void pcCommand("resume")}>▶ Resume</button>
+        <button className="primary-button" disabled={pcBusy || !pcWorker?.enabled || !pcOnline} onClick={() => void pcCommand("run-now")}>{pcBusy ? "Sending…" : `Convert now (${pending.length})`}</button>
+      </div>
+    </header>
 
-    <section className="admin-panel"><div className="queue-heading"><div><p className="eyebrow">CAZ-PC CONVERSION WORKER</p><h2>{workerLabel}</h2></div><span className={pcOnline ? "status-good" : "status-neutral"}>{pcOnline ? pc?.computer || "PC connected" : "Waiting for PC"}</span></div><div className="queue-overall"><span style={{ width: `${readyPercent}%` }} /></div><p><strong>{ready} of {total}</strong> last-scanned files are confirmed mobile ready · <strong>{pending.length}</strong> remaining.</p><p>{pcOnline ? pc?.status === "failed" ? (pc.error || pc.reason || "The current conversion failed.") : pc?.reason ? `${pc.reason}.` : pc?.override ? "Daytime Convert Now override is active." : "Worker is connected and ready." : "The site has not received a fresh heartbeat from the Windows worker."}</p>{currentFile ? <p><strong>Current file:</strong> {currentFile} · {modeLabel(pc?.mode)}</p> : null}{pc?.updatedAt ? <small>Last heartbeat: {new Date(pc.updatedAt).toLocaleTimeString()}</small> : null}<div className="hero-actions"><button className="secondary-button" disabled={libraryRefreshInFlight.current} onClick={() => void refreshLibrary().catch(() => undefined)}>Refresh compatibility scan</button>{!pcWorker?.enabled ? <button className="secondary-button" disabled={pcBusy} onClick={() => void pcCommand("enable")}>Enable PC Worker</button> : null}</div>{pcMessage ? <p className="artwork-ready">{pcMessage}</p> : null}</section>
+    <section className="admin-panel">
+      <div className="queue-heading"><div><p className="eyebrow">CAZ-PC CONVERSION WORKER</p><h2>{workerLabel}</h2></div><span className={pcOnline ? "status-good" : "status-neutral"}>{pcOnline ? pc?.computer || "PC connected" : "Waiting for PC"}</span></div>
+      <div className="queue-overall"><span style={{ width: `${readyPercent}%` }} /></div>
+      <p><strong>{ready} of {total}</strong> last-scanned files are confirmed mobile ready · <strong>{pending.length}</strong> remaining.</p>
+      <p>{pcOnline ? pc?.status === "failed" ? (pc.error || pc.reason || "The current conversion failed.") : pc?.reason ? `${pc.reason}.` : pc?.override ? "Daytime Convert Now override is active." : "Normal overnight rules are active." : "The site has not received a fresh heartbeat from the Windows worker."}</p>
+      {currentFile ? <p><strong>Current file:</strong> {currentFile} · {modeLabel(pc?.mode)}</p> : null}
+      {pc?.updatedAt ? <small>Last heartbeat: {new Date(pc.updatedAt).toLocaleTimeString()}{pc.workerVersion ? ` · Worker ${pc.workerVersion}` : ""}</small> : null}
+      <div className="hero-actions"><button className="secondary-button" disabled={libraryRefreshInFlight.current} onClick={() => void refreshLibrary().catch(() => undefined)}>Refresh compatibility scan</button>{!pcWorker?.enabled ? <button className="secondary-button" disabled={pcBusy} onClick={() => void pcCommand("enable")}>Enable PC Worker</button> : null}</div>
+      {pcMessage ? <p className="artwork-ready">{pcMessage}</p> : null}
+    </section>
+
+    <section className="admin-panel">
+      <div className="queue-heading"><div><p className="eyebrow">WEEKLY MAINTENANCE</p><h2>Compatibility + duplicate cleanup</h2></div><button className="secondary-button" disabled={pcBusy || !pcOnline || pc?.status === "converting" || pc?.status === "copying"} onClick={() => void pcCommand("run-maintenance")}>Run maintenance now</button></div>
+      <p>CAZ-PC automatically runs this Sunday around 4 AM when the overnight queue is idle. Exact duplicates are only acted on after matching file size and SHA-256 hash.</p>
+      {maintenance ? <><p><strong>{maintenance.scanned ?? 0}</strong> scanned · <strong>{maintenance.mobileReady ?? 0}</strong> mobile ready · <strong>{maintenance.incompatible ?? 0}</strong> incompatible · <strong>{maintenance.exactDuplicatesRemoved ?? 0}</strong> exact duplicates removed from the active library · <strong>{maintenance.probeErrors ?? 0}</strong> probe errors.</p>{maintenance.completedAt ? <small>Last maintenance: {new Date(maintenance.completedAt).toLocaleString()}</small> : null}<p><small>{maintenance.duplicatePolicy}</small></p></> : <p>No weekly maintenance report yet.</p>}
+    </section>
 
     {error ? <div className="state-card error">{error}</div> : null}{loading ? <div className="state-card">Inspecting your library…</div> : null}
 
@@ -108,7 +141,7 @@ export default function MediaToolsPage() {
       {failedHistory.filter((job) => !pending.some((item) => sourceMatches(item.movie.relativePath, job.source))).map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{job.error || modeLabel(job.mode)}</small></div><span className="queue-failed">Failed</span><div className="job-progress"><span style={{ width: "0%" }} /></div></div>)}
       {!pending.length && !completedHistory.length && !failedHistory.length ? <div className="state-card"><strong>Queue complete</strong><small>CAZ-PC has no incompatible files waiting in the last scan.</small></div> : null}</section> : null}
 
-    <p className="overview">CAZ-PC is the only conversion engine. Worker history updates the queue without repeatedly FFprobing the entire NAS. Full compatibility scans are now manual here and should be used for periodic maintenance; completed jobs remain authoritative after NAS verification.</p>
+    <p className="overview">CAZ-PC is the only conversion and maintenance engine. Worker history updates the queue without repeatedly FFprobing the NAS. Weekly maintenance performs the expensive full verification and exact-duplicate cleanup.</p>
     <section className="organizer-list">{items.map(({ movie, probe, error: inspectError }) => <article className="media-health-card" key={movie.id}><div><h2>{movie.title}</h2><p>{movie.fileName}</p></div>{probe ? <><div className="codec-list"><span>{probe.container}</span><span>Video: {probe.videoCodec || "unknown"}</span><span>Audio: {probe.audioCodec || "none"}</span>{probe.width ? <span>{probe.width}×{probe.height}</span> : null}</div><strong className={probe.mobileCompatible ? "status-good" : "status-neutral"}>{probe.mobileCompatible ? "Mobile ready" : probe.conversionMode === "remux" ? "Quick remux" : probe.conversionMode === "audio-convert" ? "Fast audio fix" : "Full conversion"}</strong></> : <span className="state-card error">{inspectError}</span>}</article>)}</section>
   </main>;
 }
