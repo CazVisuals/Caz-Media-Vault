@@ -39,7 +39,7 @@ async function findArtwork(filePath: string, stem: string) {
         const stat = await fs.stat(/* turbopackIgnore: true */ candidate);
         if (stat.isFile()) return candidate;
       } catch {
-        // Local artwork is optional.
+        // Local artwork is optional and files may move during conversion.
       }
     }
   }
@@ -51,6 +51,7 @@ async function walk(directory: string, root: string, files: string[]) {
   try {
     entries = await fs.readdir(directory, { withFileTypes: true });
   } catch (error) {
+    if (directory !== root) return;
     const relative = path.relative(root, directory) || ".";
     const reason = error instanceof Error ? error.message : "Unknown filesystem error";
     throw new Error(`Cannot read media directory "${relative}": ${reason}`);
@@ -67,14 +68,11 @@ async function walk(directory: string, root: string, files: string[]) {
   }
 }
 
-export async function buildLibrary(): Promise<Movie[]> {
-  const root = getMediaRoot();
-  const files: string[] = [];
-  await walk(root, root, files);
-
-  const movies = await Promise.all(files.map(async (filePath) => {
+async function buildMovie(root: string, filePath: string): Promise<Movie | null> {
+  try {
     const relativePath = path.relative(root, filePath);
     const stat = await fs.stat(filePath);
+    if (!stat.isFile()) return null;
     const parsed = parseName(path.basename(filePath));
     const episode = parseEpisodeName(path.basename(filePath));
     const localArtwork = await findArtwork(filePath, parsed.stem);
@@ -109,8 +107,20 @@ export async function buildLibrary(): Promise<Movie[]> {
       backdropUrl: null,
       trailerYouTubeId: null,
     } satisfies Movie;
-  }));
+  } catch {
+    // The converter can replace/archive a file between readdir and stat.
+    // Skip that single transient entry instead of failing the whole library.
+    return null;
+  }
+}
 
+export async function buildLibrary(): Promise<Movie[]> {
+  const root = getMediaRoot();
+  const files: string[] = [];
+  await walk(root, root, files);
+
+  const results = await Promise.all(files.map((filePath) => buildMovie(root, filePath)));
+  const movies = results.filter((movie): movie is Movie => Boolean(movie));
   return movies.sort((a, b) => a.title.localeCompare(b.title));
 }
 
@@ -121,11 +131,15 @@ export async function resolveMovie(id: string) {
   const absolutePath = path.resolve(getMediaRoot(), movie.relativePath);
   const relative = path.relative(getMediaRoot(), absolutePath);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
-  const realRoot = await fs.realpath(/* turbopackIgnore: true */ getMediaRoot());
-  const realPath = await fs.realpath(/* turbopackIgnore: true */ absolutePath);
-  const realRelative = path.relative(realRoot, realPath);
-  if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) return null;
-  return { movie, absolutePath: realPath };
+  try {
+    const realRoot = await fs.realpath(/* turbopackIgnore: true */ getMediaRoot());
+    const realPath = await fs.realpath(/* turbopackIgnore: true */ absolutePath);
+    const realRelative = path.relative(realRoot, realPath);
+    if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) return null;
+    return { movie, absolutePath: realPath };
+  } catch {
+    return null;
+  }
 }
 
 export async function resolveArtwork(id: string) {
@@ -134,9 +148,13 @@ export async function resolveArtwork(id: string) {
   const { stem } = parseName(resolved.movie.fileName);
   const artwork = await findArtwork(resolved.absolutePath, stem);
   if (!artwork) return null;
-  const realRoot = await fs.realpath(/* turbopackIgnore: true */ getMediaRoot());
-  const realArtwork = await fs.realpath(/* turbopackIgnore: true */ artwork);
-  const relative = path.relative(realRoot, realArtwork);
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
-  return realArtwork;
+  try {
+    const realRoot = await fs.realpath(/* turbopackIgnore: true */ getMediaRoot());
+    const realArtwork = await fs.realpath(/* turbopackIgnore: true */ artwork);
+    const relative = path.relative(realRoot, realArtwork);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    return realArtwork;
+  } catch {
+    return null;
+  }
 }
