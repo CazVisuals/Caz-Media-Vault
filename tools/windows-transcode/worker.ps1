@@ -11,13 +11,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$WorkerVersion = "2026.08.18.1"
+$WorkerVersion = "2026.08.18.2"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $StateFile = Join-Path $WorkRoot 'worker-state.json'
 $LogFile = Join-Path $WorkRoot 'worker.log'
 $ControlRoot = Join-Path $MediaRoot '.constants-hub\pc-worker'
 $ControlStatus = Join-Path $ControlRoot 'status.json'
 $HistoryFile = Join-Path $ControlRoot 'history.json'
+$StreamActivityFile = Join-Path $ControlRoot 'streaming.json'
 $LocalStopFile = Join-Path $WorkRoot 'STOP'
 $LocalPauseFile = Join-Path $WorkRoot 'PAUSE'
 $RemoteStopFile = Join-Path $ControlRoot 'STOP'
@@ -56,6 +57,24 @@ public static class IdleTime { [StructLayout(LayoutKind.Sequential)] public stru
 function Get-GpuUtilization { try { $value=& nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>$null|Select-Object -First 1; if($LASTEXITCODE -ne 0){return 0}; return [int]($value.Trim()) } catch { return 0 } }
 function Test-GpuBusy { if($ForceWhenBusy){return $false}; $samples=@(); 1..3|ForEach-Object {$samples+=Get-GpuUtilization; if($_ -lt 3){Start-Sleep -Seconds 2}}; return ($samples|Where-Object {$_ -ge $GpuBusyThreshold}).Count -eq 3 }
 function In-Schedule { $hour=(Get-Date).Hour; if($StartHour -lt $EndHour){return $hour -ge $StartHour -and $hour -lt $EndHour}; return $hour -ge $StartHour -or $hour -lt $EndHour }
+function Test-PlaybackActive {
+  try {
+    if(!(Test-Path -LiteralPath $StreamActivityFile)){return $false}
+    $value=Get-Content -LiteralPath $StreamActivityFile -Raw | ConvertFrom-Json
+    if($null -eq $value.at){return $false}
+    $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    return ($now - [int64]$value.at) -lt 120000
+  } catch { return $false }
+}
+function Wait-ForPlaybackIdle([hashtable]$State) {
+  $logged=$false
+  while(Test-PlaybackActive){
+    if(!$logged){Write-Log 'Playback detected. Holding NAS copy/archive until streaming is idle.'; $logged=$true}
+    Save-State @{status='waiting';reason='Playback priority: streaming active';source=$State.source;mode=$State.mode;temp=$State.temp;output=$State.output;override=$State.override;jobId=$State.jobId}
+    Start-Sleep -Seconds 5
+  }
+  if($logged){Write-Log 'Playback idle. Resuming conversion delivery.'}
+}
 function Get-Probe([string]$Path) { $json=& ffprobe -v error -show_entries format=format_name:stream=index,codec_type,codec_name,pix_fmt -of json -- "$Path"; if($LASTEXITCODE -ne 0){throw "ffprobe failed for $Path"}; return $json|ConvertFrom-Json }
 function Get-Mode([string]$Path) { $probe=Get-Probe $Path; $video=$probe.streams|Where-Object codec_type -eq 'video'|Select-Object -First 1; $audio=$probe.streams|Where-Object codec_type -eq 'audio'|Select-Object -First 1; $ext=[IO.Path]::GetExtension($Path).ToLowerInvariant(); $videoOk=$video -and $video.codec_name -eq 'h264' -and (!$video.pix_fmt -or $video.pix_fmt -eq 'yuv420p'); $audioOk=!$audio -or $audio.codec_name -eq 'aac'; if($ext -eq '.mp4' -and $videoOk -and $audioOk){return 'skip'}; if($videoOk -and $audioOk){return 'remux'}; if($videoOk){return 'audio'}; return 'transcode' }
 function Test-Output([string]$Path) { $probe=Get-Probe $Path; $video=$probe.streams|Where-Object codec_type -eq 'video'|Select-Object -First 1; $audio=$probe.streams|Where-Object codec_type -eq 'audio'|Select-Object -First 1; return $video -and $video.codec_name -eq 'h264' -and (!$video.pix_fmt -or $video.pix_fmt -eq 'yuv420p') -and (!$audio -or $audio.codec_name -eq 'aac') }
@@ -70,7 +89,7 @@ function Convert-One([IO.FileInfo]$File,[bool]$OverrideActive) {
   $jobId=[Guid]::NewGuid().ToString('N'); Update-History @{id=$jobId;source=$File.FullName;output=$dest;mode=$mode;status='converting';startedAt=(Get-Date).ToString('o')}; $active=@{status='converting';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}; Save-State $active; Write-Log "START [$mode] $($File.FullName)"
   try {
     if($mode -eq 'transcode'){$args=@('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} elseif($mode -eq 'audio'){$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} else {$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','copy','-movflags','+faststart',$tempOutput)}
-    Invoke-FfmpegWithHeartbeat $args $active; if(!(Test-Output $tempOutput)){throw "verification failed for $tempOutput"}; Update-History @{id=$jobId;status='copying'}; Save-State @{status='copying';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}; Copy-Item -LiteralPath $tempOutput -Destination $dest -Force; if(!(Test-Output $dest)){Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue; throw "NAS copy verification failed for $dest"}; $archived=Join-Path $archiveDir $File.Name; if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}; Move-Item -LiteralPath $File.FullName -Destination $archived; Remove-Item -LiteralPath $tempDir -Recurse -Force; Update-History @{id=$jobId;status='completed';completedAt=(Get-Date).ToString('o')}; Save-State @{status='completed';source=$File.FullName;mode=$mode;output=$dest;archived=$archived;override=$OverrideActive;jobId=$jobId}; Write-Log "DONE $dest"; return $true
+    Invoke-FfmpegWithHeartbeat $args $active; if(!(Test-Output $tempOutput)){throw "verification failed for $tempOutput"}; Wait-ForPlaybackIdle $active; Update-History @{id=$jobId;status='copying'}; Save-State @{status='copying';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}; Copy-Item -LiteralPath $tempOutput -Destination $dest -Force; if(!(Test-Output $dest)){Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue; throw "NAS copy verification failed for $dest"}; $archived=Join-Path $archiveDir $File.Name; if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}; Move-Item -LiteralPath $File.FullName -Destination $archived; Remove-Item -LiteralPath $tempDir -Recurse -Force; Update-History @{id=$jobId;status='completed';completedAt=(Get-Date).ToString('o')}; Save-State @{status='completed';source=$File.FullName;mode=$mode;output=$dest;archived=$archived;override=$OverrideActive;jobId=$jobId}; Write-Log "DONE $dest"; return $true
   } catch { $message=$_.Exception.Message; Update-History @{id=$jobId;status='failed';error=$message}; Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue; throw }
 }
 function Invoke-Maintenance {
@@ -88,8 +107,9 @@ while($true){
   if((Test-Path -LiteralPath $LocalStopFile) -or (Test-Path -LiteralPath $RemoteStopFile)){Remove-Item -LiteralPath $RemoteStopFile -Force -ErrorAction SilentlyContinue; Write-Log 'STOP command detected. Exiting.'; Save-State @{status='stopped';override=$false}; break}
   if(Test-Path -LiteralPath $RemoteEndOverrideFile){Remove-Item -LiteralPath $RemoteEndOverrideFile -Force -ErrorAction SilentlyContinue; $siteOverride=$false; Write-Log 'Daytime override ended; normal overnight rules restored.'; Save-State @{status='waiting';reason='daytime override ended';override=$false}}
   if(Test-Path -LiteralPath $RemoteRunFile){Remove-Item -LiteralPath $RemoteRunFile -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $RemotePauseFile -Force -ErrorAction SilentlyContinue; $siteOverride=$true; Write-Log 'Convert Now command detected. Daytime override enabled.'}
-  if(Test-Path -LiteralPath $RemoteMaintenanceFile){Remove-Item -LiteralPath $RemoteMaintenanceFile -Force -ErrorAction SilentlyContinue; $siteOverride=$false; Invoke-Maintenance; continue}
   if((Test-Path -LiteralPath $LocalPauseFile) -or (Test-Path -LiteralPath $RemotePauseFile)){$siteOverride=$false; Save-State @{status='paused';override=$false}; Start-Sleep -Seconds 5; continue}
+  if(Test-PlaybackActive){Save-State @{status='waiting';reason='Playback priority: streaming active';override=$siteOverride}; if($Once){break}; Start-Sleep -Seconds 5; continue}
+  if(Test-Path -LiteralPath $RemoteMaintenanceFile){Remove-Item -LiteralPath $RemoteMaintenanceFile -Force -ErrorAction SilentlyContinue; $siteOverride=$false; Invoke-Maintenance; continue}
   if(Test-GpuBusy){$gpu=Get-GpuUtilization; Save-State @{status='waiting';reason="Gaming protection: sustained GPU load ($gpu%)";override=$siteOverride}; if($Once){break}; Start-Sleep -Seconds 10; continue}
   if(!$siteOverride){ if(!(In-Schedule)){Save-State @{status='waiting';reason='outside schedule';override=$false}; if($Once){break}; Start-Sleep -Seconds 5; continue}; if((Get-IdleSeconds) -lt ($IdleMinutes*60)){Save-State @{status='waiting';reason='PC active';override=$false}; if($Once){break}; Start-Sleep -Seconds 10; continue} }
   $converted=$false; foreach($file in Get-Candidates){ try { if(Convert-One $file $siteOverride){$converted=$true;break} } catch { Write-Log "ERROR $($file.FullName): $($_.Exception.Message)"; Save-State @{status='failed';source=$file.FullName;error=$_.Exception.Message;override=$siteOverride}; Start-Sleep -Seconds 10 } }
