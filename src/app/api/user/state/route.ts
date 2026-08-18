@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { currentSession } from "@/lib/auth/request";
 import { clearProgress, getProfileState, saveProgress, setWatchlist } from "@/lib/app-data/store";
+import { markStreaming } from "@/lib/media/activity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as { action?: string; mediaId?: string; seconds?: number; duration?: number; included?: boolean };
     if (!body.mediaId) throw new Error("Media ID is required.");
-    if (body.action === "progress") return Response.json({ success: true, progress: await saveProgress(session.profileId, body.mediaId, Number(body.seconds), Number(body.duration)) });
+    if (body.action === "progress") {
+      await markStreaming(body.mediaId).catch(() => undefined);
+      return Response.json({ success: true, progress: await saveProgress(session.profileId, body.mediaId, Number(body.seconds), Number(body.duration)) });
+    }
     if (body.action === "clear-progress") return Response.json({ success: true, cleared: await clearProgress(session.profileId, body.mediaId) });
     if (body.action === "watchlist") return Response.json({ success: true, watchlist: await setWatchlist(session.profileId, body.mediaId, Boolean(body.included)) });
     throw new Error("Unknown profile-state action.");
