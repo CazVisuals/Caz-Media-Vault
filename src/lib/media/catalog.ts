@@ -8,9 +8,22 @@ import { parseEpisodeName } from "./episodes";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"]);
 const ARTWORK_NAMES = ["poster.jpg", "poster.jpeg", "poster.png", "folder.jpg", "folder.jpeg", "folder.png"];
+const LIBRARY_CACHE_TTL_MS = Math.max(15_000, Number(process.env.LIBRARY_CACHE_TTL_MS || 60_000));
+
+type LibraryCache = { movies: Movie[]; scannedAt: number };
+let libraryCache: LibraryCache | null = null;
+let libraryBuild: Promise<Movie[]> | null = null;
 
 export function getMediaRoot() {
   return path.resolve(/* turbopackIgnore: true */ process.env.MEDIA_ROOT?.trim() || "/Volumes/video");
+}
+
+export function getLibraryCacheStatus() {
+  return libraryCache ? { available: true, scannedAt: new Date(libraryCache.scannedAt).toISOString(), movieCount: libraryCache.movies.length } : { available: false, scannedAt: null, movieCount: 0 };
+}
+
+export function invalidateLibraryCache() {
+  libraryCache = null;
 }
 
 function movieId(relativePath: string) {
@@ -108,25 +121,43 @@ async function buildMovie(root: string, filePath: string): Promise<Movie | null>
       trailerYouTubeId: null,
     } satisfies Movie;
   } catch {
-    // The converter can replace/archive a file between readdir and stat.
-    // Skip that single transient entry instead of failing the whole library.
+    // A converter may replace/archive a file between readdir and stat.
     return null;
   }
 }
 
-export async function buildLibrary(): Promise<Movie[]> {
+async function scanLibrary(): Promise<Movie[]> {
   const root = getMediaRoot();
   const files: string[] = [];
   await walk(root, root, files);
-
   const results = await Promise.all(files.map((filePath) => buildMovie(root, filePath)));
-  const movies = results.filter((movie): movie is Movie => Boolean(movie));
-  return movies.sort((a, b) => a.title.localeCompare(b.title));
+  return results.filter((movie): movie is Movie => Boolean(movie)).sort((a, b) => a.title.localeCompare(b.title));
+}
+
+export async function buildLibrary(options: { force?: boolean } = {}): Promise<Movie[]> {
+  const now = Date.now();
+  if (!options.force && libraryCache && now - libraryCache.scannedAt < LIBRARY_CACHE_TTL_MS) return libraryCache.movies;
+  if (libraryBuild) return libraryBuild;
+
+  libraryBuild = scanLibrary()
+    .then((movies) => {
+      libraryCache = { movies, scannedAt: Date.now() };
+      return movies;
+    })
+    .catch((error) => {
+      // Keep pages alive during short NAS stalls when a known-good index exists.
+      if (libraryCache) return libraryCache.movies;
+      throw error;
+    })
+    .finally(() => { libraryBuild = null; });
+  return libraryBuild;
 }
 
 export async function resolveMovie(id: string) {
   if (!/^[a-f0-9]{24}$/.test(id)) return null;
-  const movie = (await buildLibrary()).find((item) => item.id === id);
+  let movie = (await buildLibrary()).find((item) => item.id === id);
+  // A conversion changes the extension (and therefore ID). Only rescan on an actual cache miss.
+  if (!movie) movie = (await buildLibrary({ force: true })).find((item) => item.id === id);
   if (!movie) return null;
   const absolutePath = path.resolve(getMediaRoot(), movie.relativePath);
   const relative = path.relative(getMediaRoot(), absolutePath);
