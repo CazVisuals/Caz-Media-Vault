@@ -15,8 +15,36 @@ type PcWorkerStatus = {
   updatedAt?: string;
   computer?: string;
   override?: boolean;
+  jobId?: string;
 };
-type PcWorker = { success: boolean; enabled?: boolean; status?: PcWorkerStatus | null; error?: string };
+type PcJob = {
+  id: string;
+  source: string;
+  output?: string;
+  mode?: string;
+  status: "converting" | "copying" | "completed" | "failed";
+  error?: string;
+  startedAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+};
+type PcWorker = { success: boolean; enabled?: boolean; status?: PcWorkerStatus | null; history?: PcJob[]; error?: string };
+
+function normalized(value: string) {
+  return value.replace(/\//g, "\\").toLowerCase();
+}
+function sourceMatches(relativePath: string, source: string) {
+  return normalized(source).endsWith(normalized(relativePath));
+}
+function displaySource(source: string) {
+  const marker = "\\video\\";
+  const lower = source.toLowerCase();
+  const index = lower.indexOf(marker);
+  return index >= 0 ? source.slice(index + marker.length) : source.split("\\").pop() || source;
+}
+function modeLabel(mode?: string) {
+  return mode === "remux" ? "Quick remux" : mode === "audio" || mode === "audio-convert" ? "Audio conversion" : mode === "transcode" ? "RTX NVENC" : "Conversion";
+}
 
 export default function MediaToolsPage() {
   const [items, setItems] = useState<Inspection[]>([]);
@@ -27,7 +55,8 @@ export default function MediaToolsPage() {
   const [pcBusy, setPcBusy] = useState(false);
   const [pcMessage, setPcMessage] = useState("");
   const libraryRefreshInFlight = useRef(false);
-  const previousPcSource = useRef("");
+  const previousJobId = useRef("");
+  const previousStatus = useRef("");
 
   async function refreshLibrary() {
     if (libraryRefreshInFlight.current) return;
@@ -59,11 +88,14 @@ export default function MediaToolsPage() {
     const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
     setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
 
-    const source = result.status?.source || "";
-    if (source && previousPcSource.current && source !== previousPcSource.current) {
-      void refreshLibrary().catch(() => undefined);
-    }
-    previousPcSource.current = source;
+    const jobId = result.status?.jobId || "";
+    const status = result.status?.status || "";
+    const finished = status === "completed" || status === "failed";
+    const changedJob = Boolean(jobId && previousJobId.current && jobId !== previousJobId.current);
+    const changedToFinished = finished && previousStatus.current !== status;
+    if (changedJob || changedToFinished) void refreshLibrary().catch(() => undefined);
+    previousJobId.current = jobId;
+    previousStatus.current = status;
   }
 
   useEffect(() => {
@@ -87,7 +119,7 @@ export default function MediaToolsPage() {
     };
   }, []);
 
-  async function pcCommand(action: "enable" | "run-now" | "pause" | "resume" | "stop") {
+  async function pcCommand(action: "enable" | "run-now" | "pause" | "resume" | "stop" | "clear-completed" | "clear-failed") {
     setPcBusy(true);
     setPcMessage("");
     setError("");
@@ -102,7 +134,13 @@ export default function MediaToolsPage() {
       setPcWorker(result);
       const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
       setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
-      setPcMessage(action === "run-now" ? "Convert Now sent to CAZ-PC." : action === "pause" ? "Pause sent to CAZ-PC." : action === "resume" ? "Resume sent to CAZ-PC." : "PC worker enabled.");
+      setPcMessage(
+        action === "run-now" ? "Convert Now sent to CAZ-PC." :
+        action === "pause" ? "Pause sent to CAZ-PC." :
+        action === "resume" ? "Resume sent to CAZ-PC." :
+        action === "clear-completed" ? "Completed history cleared." :
+        action === "clear-failed" ? "Failed history cleared." : "PC worker enabled.",
+      );
       window.setTimeout(() => void refreshPc(), 1200);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "PC worker command failed.");
@@ -112,14 +150,18 @@ export default function MediaToolsPage() {
   }
 
   const pc = pcWorker?.status;
-  const pending = items.filter((item) => item.probe && !item.probe.mobileCompatible);
-  const ready = items.filter((item) => item.probe?.mobileCompatible).length;
+  const history = pcWorker?.history || [];
+  const completedHistory = history.filter((job) => job.status === "completed");
+  const failedHistory = history.filter((job) => job.status === "failed");
+  const rawPending = items.filter((item) => item.probe && !item.probe.mobileCompatible);
+  const pending = rawPending.filter((item) => !completedHistory.some((job) => sourceMatches(item.movie.relativePath, job.source)));
   const total = items.filter((item) => item.probe).length;
+  const ready = Math.max(0, total - pending.length);
   const readyPercent = total ? Math.round((ready / total) * 100) : 0;
   const currentSource = pc?.source || "";
   const currentFile = currentSource.split("\\").pop() || "";
   const workerLabel = !pcOnline ? "Offline" : pc?.status === "converting" ? "Converting" : pc?.status === "copying" ? "Copying to NAS" : pc?.status === "paused" ? "Paused" : pc?.status === "waiting" ? "Connected / waiting" : pc?.status || "Connected";
-  const activeMode = pc?.mode === "remux" ? "Quick remux" : pc?.mode === "audio" ? "Audio conversion" : pc?.mode === "transcode" ? "RTX NVENC transcode" : null;
+  const activeMode = modeLabel(pc?.mode);
 
   return <main className="admin-shell">
     <header className="admin-header">
@@ -137,10 +179,10 @@ export default function MediaToolsPage() {
         <span className={pcOnline ? "status-good" : "status-neutral"}>{pcOnline ? pc?.computer || "PC connected" : "Waiting for PC"}</span>
       </div>
       <div className="queue-overall"><span style={{ width: `${readyPercent}%` }} /></div>
-      <p><strong>{ready} of {total}</strong> inspected files are mobile ready · <strong>{pending.length}</strong> remaining.</p>
+      <p><strong>{ready} of {total}</strong> inspected files are confirmed mobile ready · <strong>{pending.length}</strong> remaining.</p>
       <p>{pcOnline ? pc?.reason ? `${pc.reason}.` : pc?.override ? "Daytime Convert Now override is active." : "Worker is connected and ready." : "The site has not received a fresh heartbeat from the Windows worker."}</p>
-      {currentFile ? <p><strong>Current file:</strong> {currentFile}{activeMode ? ` · ${activeMode}` : ""}</p> : null}
-      {pc?.updatedAt ? <small>Last update: {new Date(pc.updatedAt).toLocaleTimeString()}</small> : null}
+      {currentFile ? <p><strong>Current file:</strong> {currentFile} · {activeMode}</p> : null}
+      {pc?.updatedAt ? <small>Last heartbeat: {new Date(pc.updatedAt).toLocaleTimeString()}</small> : null}
       {!pcWorker?.enabled ? <div className="hero-actions"><button className="secondary-button" disabled={pcBusy} onClick={() => void pcCommand("enable")}>Enable PC Worker</button></div> : null}
       {pcMessage ? <p className="artwork-ready">{pcMessage}</p> : null}
     </section>
@@ -149,20 +191,40 @@ export default function MediaToolsPage() {
     {loading ? <div className="state-card">Inspecting your library…</div> : null}
 
     {!loading ? <section className="admin-panel">
-      <div className="queue-heading"><div><p className="eyebrow">CAZ-PC QUEUE</p><h2>{pending.length ? `${pending.length} waiting for conversion` : "All inspected media is ready"}</h2></div></div>
-      {pending.length ? pending.map(({ movie, probe }) => {
-        const isCurrent = Boolean(currentFile && movie.fileName.toLowerCase() === currentFile.toLowerCase());
-        const label = isCurrent && pc?.status === "copying" ? "Copying" : isCurrent ? "Converting" : "Queued";
-        const mode = probe?.conversionMode === "remux" ? "Quick remux" : probe?.conversionMode === "audio-convert" ? "Audio conversion" : "RTX NVENC";
+      <div className="queue-heading">
+        <div><p className="eyebrow">CAZ-PC QUEUE</p><h2>{pending.length ? `${pending.length} waiting for conversion` : "All inspected media is ready"}</h2></div>
+        <div className="queue-actions">
+          <button className="secondary-button" disabled={pcBusy || completedHistory.length === 0} onClick={() => void pcCommand("clear-completed")}>Clear completed</button>
+          <button className="secondary-button" disabled={pcBusy || failedHistory.length === 0} onClick={() => void pcCommand("clear-failed")}>Clear failed</button>
+        </div>
+      </div>
+
+      {pending.map(({ movie, probe }) => {
+        const isCurrent = Boolean(currentSource && sourceMatches(movie.relativePath, currentSource));
+        const label = isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? "Converting" : "Queued";
         return <div className="queue-row" key={movie.id}>
-          <div><strong>{movie.relativePath}</strong><small>{mode}</small></div>
+          <div><strong>{movie.relativePath}</strong><small>{modeLabel(probe?.conversionMode || undefined)}</small></div>
           <span className={isCurrent ? "queue-converting" : "queue-queued"}>{label}</span>
-          <div className="job-progress"><span style={{ width: isCurrent ? "65%" : "0%" }} /></div>
+          <div className="job-progress"><span style={{ width: "0%" }} /></div>
         </div>;
-      }) : <div className="state-card"><strong>Queue complete</strong><small>CAZ-PC has no incompatible files waiting.</small></div>}
+      })}
+
+      {completedHistory.map((job) => <div className="queue-row" key={job.id}>
+        <div><strong>{displaySource(job.source)}</strong><small>{modeLabel(job.mode)}</small></div>
+        <span className="queue-completed">Completed</span>
+        <div className="job-progress"><span style={{ width: "100%" }} /></div>
+      </div>)}
+
+      {failedHistory.map((job) => <div className="queue-row" key={job.id}>
+        <div><strong>{displaySource(job.source)}</strong><small>{job.error || modeLabel(job.mode)}</small></div>
+        <span className="queue-failed">Failed</span>
+        <div className="job-progress"><span style={{ width: "0%" }} /></div>
+      </div>)}
+
+      {!pending.length && !completedHistory.length && !failedHistory.length ? <div className="state-card"><strong>Queue complete</strong><small>CAZ-PC has no incompatible files waiting.</small></div> : null}
     </section> : null}
 
-    <p className="overview">This page now uses CAZ-PC as the only active conversion source. The NAS stores media and worker status only; it does not run FFmpeg conversions.</p>
+    <p className="overview">CAZ-PC is the only conversion engine. A job is marked Completed only after the MP4 is verified on the NAS and the original is archived. The compatibility list below independently FFprobes the files currently on the NAS.</p>
 
     <section className="organizer-list">{items.map(({ movie, probe, error: inspectError }) => <article className="media-health-card" key={movie.id}><div><h2>{movie.title}</h2><p>{movie.fileName}</p></div>{probe ? <><div className="codec-list"><span>{probe.container}</span><span>Video: {probe.videoCodec || "unknown"}</span><span>Audio: {probe.audioCodec || "none"}</span>{probe.width ? <span>{probe.width}×{probe.height}</span> : null}</div><strong className={probe.mobileCompatible ? "status-good" : "status-neutral"}>{probe.mobileCompatible ? "Mobile ready" : probe.conversionMode === "remux" ? "Quick remux" : probe.conversionMode === "audio-convert" ? "Fast audio fix" : "Full conversion"}</strong></> : <span className="state-card error">{inspectError}</span>}</article>)}</section>
   </main>;
