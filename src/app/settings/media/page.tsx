@@ -25,11 +25,13 @@ export default function MediaToolsPage() {
   const [pcOnline, setPcOnline] = useState(false);
   const [pcBusy, setPcBusy] = useState(false);
   const [pcMessage, setPcMessage] = useState("");
+  const [libraryRefreshing, setLibraryRefreshing] = useState(false);
   const libraryRefreshInFlight = useRef(false);
 
   async function refreshLibrary() {
     if (libraryRefreshInFlight.current) return;
     libraryRefreshInFlight.current = true;
+    setLibraryRefreshing(true);
     try {
       const response = await fetch("/api/media/library", { cache: "no-store" });
       const result = await response.json() as { movies?: Movie[]; error?: string };
@@ -42,7 +44,10 @@ export default function MediaToolsPage() {
         } catch { return { movie, error: "Inspection failed." }; }
       }));
       setItems(inspections);
-    } finally { libraryRefreshInFlight.current = false; }
+    } finally {
+      libraryRefreshInFlight.current = false;
+      setLibraryRefreshing(false);
+    }
   }
 
   async function refreshPc() {
@@ -123,7 +128,7 @@ export default function MediaToolsPage() {
       <p>{pcOnline ? pc?.status === "failed" ? (pc.error || pc.reason || "The current conversion failed.") : pc?.reason ? `${pc.reason}.` : pc?.override ? "Daytime Convert Now override is active." : "Normal overnight rules are active." : "The site has not received a fresh heartbeat from the Windows worker."}</p>
       {currentFile ? <p><strong>Current file:</strong> {currentFile} · {modeLabel(pc?.mode)}</p> : null}
       {pc?.updatedAt ? <small>Last heartbeat: {new Date(pc.updatedAt).toLocaleTimeString()}{pc.workerVersion ? ` · Worker ${pc.workerVersion}` : ""}</small> : null}
-      <div className="hero-actions"><button className="secondary-button" disabled={libraryRefreshInFlight.current} onClick={() => void refreshLibrary().catch(() => undefined)}>Refresh compatibility scan</button>{!pcWorker?.enabled ? <button className="secondary-button" disabled={pcBusy} onClick={() => void pcCommand("enable")}>Enable PC Worker</button> : null}</div>
+      <div className="hero-actions"><button className="secondary-button" disabled={libraryRefreshing} onClick={() => void refreshLibrary().catch(() => undefined)}>{libraryRefreshing ? "Scanning…" : "Refresh compatibility scan"}</button>{!pcWorker?.enabled ? <button className="secondary-button" disabled={pcBusy} onClick={() => void pcCommand("enable")}>Enable PC Worker</button> : null}</div>
       {pcMessage ? <p className="artwork-ready">{pcMessage}</p> : null}
     </section>
 
