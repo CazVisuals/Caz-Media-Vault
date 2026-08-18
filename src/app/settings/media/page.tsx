@@ -16,6 +16,7 @@ type PcWorkerStatus = {
   computer?: string;
   override?: boolean;
   jobId?: string;
+  error?: string;
 };
 type PcJob = {
   id: string;
@@ -152,7 +153,21 @@ export default function MediaToolsPage() {
   const pc = pcWorker?.status;
   const history = pcWorker?.history || [];
   const completedHistory = history.filter((job) => job.status === "completed");
-  const failedHistory = history.filter((job) => job.status === "failed");
+  const historyFailures = history.filter((job) => job.status === "failed");
+  const liveFailedJob: PcJob | null = pc?.status === "failed" && pc.source
+    ? {
+        id: pc.jobId || `live-failed-${pc.source}`,
+        source: pc.source,
+        output: pc.output,
+        mode: pc.mode,
+        status: "failed",
+        error: pc.error || pc.reason || "CAZ-PC reported a conversion failure.",
+        updatedAt: pc.updatedAt,
+      }
+    : null;
+  const failedHistory = liveFailedJob && !historyFailures.some((job) => job.id === liveFailedJob.id || sourceMatches(displaySource(job.source), liveFailedJob.source))
+    ? [liveFailedJob, ...historyFailures]
+    : historyFailures;
   const rawPending = items.filter((item) => item.probe && !item.probe.mobileCompatible);
   const pending = rawPending.filter((item) => !completedHistory.some((job) => sourceMatches(item.movie.relativePath, job.source)));
   const total = items.filter((item) => item.probe).length;
@@ -160,7 +175,7 @@ export default function MediaToolsPage() {
   const readyPercent = total ? Math.round((ready / total) * 100) : 0;
   const currentSource = pc?.source || "";
   const currentFile = currentSource.split("\\").pop() || "";
-  const workerLabel = !pcOnline ? "Offline" : pc?.status === "converting" ? "Converting" : pc?.status === "copying" ? "Copying to NAS" : pc?.status === "paused" ? "Paused" : pc?.status === "waiting" ? "Connected / waiting" : pc?.status || "Connected";
+  const workerLabel = !pcOnline ? "Offline" : pc?.status === "converting" ? "Converting" : pc?.status === "copying" ? "Copying to NAS" : pc?.status === "failed" ? "Failed" : pc?.status === "paused" ? "Paused" : pc?.status === "waiting" ? "Connected / waiting" : pc?.status || "Connected";
   const activeMode = modeLabel(pc?.mode);
 
   return <main className="admin-shell">
@@ -180,7 +195,7 @@ export default function MediaToolsPage() {
       </div>
       <div className="queue-overall"><span style={{ width: `${readyPercent}%` }} /></div>
       <p><strong>{ready} of {total}</strong> inspected files are confirmed mobile ready · <strong>{pending.length}</strong> remaining.</p>
-      <p>{pcOnline ? pc?.reason ? `${pc.reason}.` : pc?.override ? "Daytime Convert Now override is active." : "Worker is connected and ready." : "The site has not received a fresh heartbeat from the Windows worker."}</p>
+      <p>{pcOnline ? pc?.status === "failed" ? (pc.error || pc.reason || "The current conversion failed.") : pc?.reason ? `${pc.reason}.` : pc?.override ? "Daytime Convert Now override is active." : "Worker is connected and ready." : "The site has not received a fresh heartbeat from the Windows worker."}</p>
       {currentFile ? <p><strong>Current file:</strong> {currentFile} · {activeMode}</p> : null}
       {pc?.updatedAt ? <small>Last heartbeat: {new Date(pc.updatedAt).toLocaleTimeString()}</small> : null}
       {!pcWorker?.enabled ? <div className="hero-actions"><button className="secondary-button" disabled={pcBusy} onClick={() => void pcCommand("enable")}>Enable PC Worker</button></div> : null}
@@ -201,10 +216,12 @@ export default function MediaToolsPage() {
 
       {pending.map(({ movie, probe }) => {
         const isCurrent = Boolean(currentSource && sourceMatches(movie.relativePath, currentSource));
-        const label = isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? "Converting" : "Queued";
+        const isFailed = isCurrent && pc?.status === "failed";
+        const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? "Converting" : "Queued";
+        const statusClass = isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued";
         return <div className="queue-row" key={movie.id}>
-          <div><strong>{movie.relativePath}</strong><small>{modeLabel(probe?.conversionMode || undefined)}</small></div>
-          <span className={isCurrent ? "queue-converting" : "queue-queued"}>{label}</span>
+          <div><strong>{movie.relativePath}</strong><small>{isFailed ? (pc?.error || pc?.reason || modeLabel(probe?.conversionMode || undefined)) : modeLabel(probe?.conversionMode || undefined)}</small></div>
+          <span className={statusClass}>{label}</span>
           <div className="job-progress"><span style={{ width: "0%" }} /></div>
         </div>;
       })}
@@ -215,7 +232,7 @@ export default function MediaToolsPage() {
         <div className="job-progress"><span style={{ width: "100%" }} /></div>
       </div>)}
 
-      {failedHistory.map((job) => <div className="queue-row" key={job.id}>
+      {failedHistory.filter((job) => !pending.some((item) => sourceMatches(item.movie.relativePath, job.source))).map((job) => <div className="queue-row" key={job.id}>
         <div><strong>{displaySource(job.source)}</strong><small>{job.error || modeLabel(job.mode)}</small></div>
         <span className="queue-failed">Failed</span>
         <div className="job-progress"><span style={{ width: "0%" }} /></div>
