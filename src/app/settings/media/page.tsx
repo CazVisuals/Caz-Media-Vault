@@ -27,6 +27,7 @@ export default function MediaToolsPage() {
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState("");
   const [pcWorker, setPcWorker] = useState<PcWorker | null>(null);
+  const [pcOnline, setPcOnline] = useState(false);
   const [pcBusy, setPcBusy] = useState(false);
   const [pcMessage, setPcMessage] = useState("");
 
@@ -42,7 +43,12 @@ export default function MediaToolsPage() {
       setPolicyReason(result.policyReason || null);
       setOverrideActive(Boolean(result.overrideActive));
     }
-    if (pcResponse.ok) setPcWorker(await pcResponse.json() as PcWorker);
+    if (pcResponse.ok) {
+      const pcResult = await pcResponse.json() as PcWorker;
+      setPcWorker(pcResult);
+      const updatedAt = pcResult.status?.updatedAt ? new Date(pcResult.status.updatedAt).getTime() : 0;
+      setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
+    }
   }
 
   useEffect(() => {
@@ -83,6 +89,8 @@ export default function MediaToolsPage() {
       const result = await response.json() as PcWorker;
       if (!response.ok || !result.success) throw new Error(result.error || "PC worker command failed.");
       setPcWorker(result);
+      const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
+      setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
       setPcMessage(action === "run-now" ? "Convert Now sent to CAZ-PC." : action === "pause" ? "Pause sent to CAZ-PC." : action === "resume" ? "Resume sent to CAZ-PC." : "PC worker enabled.");
       window.setTimeout(() => void refreshJobs(), 1200);
     } catch (reason) {
@@ -104,7 +112,6 @@ export default function MediaToolsPage() {
 
   const incompatible = items.filter((item) => item.probe && !item.probe.mobileCompatible).length;
   const pc = pcWorker?.status;
-  const pcOnline = Boolean(pc?.updatedAt && Date.now() - new Date(pc.updatedAt).getTime() < 30000);
   const workerLabel = !pcOnline ? "Offline" : pc?.status === "converting" ? "Converting" : pc?.status === "copying" ? "Copying to NAS" : pc?.status === "paused" ? "Paused" : pc?.status === "waiting" ? "Connected / waiting" : pc?.status || "Connected";
   const currentFile = pc?.source?.split("\\").pop();
   const modeLabel = pc?.mode === "remux" ? "Quick remux" : pc?.mode === "audio" ? "Audio conversion" : pc?.mode === "transcode" ? "RTX NVENC transcode" : null;
