@@ -3,7 +3,9 @@ import type { Movie } from "@/lib/media/types";
 export type MediaCollection = { name: string; movies: Movie[]; automatic: boolean };
 
 const franchiseRules: { name: string; pattern: RegExp }[] = [
-  { name: "Marvel", pattern: /spider[\s-]*man|spider[\s-]*verse|venom|avengers|iron[\s-]*man|captain america|captain marvel|thor|black panther|guardians of the galaxy|doctor strange|ant[\s-]*man|deadpool|wolverine|\bx[\s-]*men\b|fantastic four|marvel/i },
+  { name: "Disney", pattern: /snow white|pinocchio|fantasia|dumbo|bambi|cinderella|alice in wonderland|peter pan|lady and the tramp|sleeping beauty|101 dalmatians|jungle book|aristocats|robin hood|little mermaid|beauty and the beast|aladdin|lion king|pocahontas|hunchback of notre dame|hercules|mulan|tarzan|emperor.s new groove|lilo (?:and|&) stitch|treasure planet|brother bear|chicken little|meet the robinsons|bolt|princess and the frog|tangled|wreck[\s-]*it ralph|frozen|big hero 6|zootopia|moana|raya and the last dragon|encanto|wish|mary poppins|tron|pirates of the caribbean|haunted mansion|hocus pocus|disney/i },
+  { name: "Pixar", pattern: /toy story|a bug.s life|monsters[,\s]|finding nemo|the incredibles|cars|ratatouille|wall[\s-]*e|\bup\b|brave|monsters university|inside out|the good dinosaur|finding dory|coco|incredibles 2|onward|\bsoul\b|luca|turning red|lightyear|elemental|elio|pixar/i },
+  { name: "Marvel", pattern: /spider[\s-]*man|spider[\s-]*verse|venom|avengers|iron[\s-]*man|captain america|captain marvel|thor|black panther|guardians of the galaxy|doctor strange|ant[\s-]*man|deadpool|wolverine|\bx[\s-]*men\b|fantastic four|marvels?|shang[\s-]*chi|eternals|black widow|hulk/i },
   { name: "DC Universe", pattern: /batman|superman|wonder woman|aquaman|justice league|suicide squad|harley quinn|shazam|blue beetle|the flash|man of steel|joker|black adam|dc universe/i },
   { name: "Star Wars", pattern: /star[\s-]*wars|mandalorian|book of boba fett|\bandor\b|\bahsoka\b|obi[\s-]*wan/i },
   { name: "Wizarding World", pattern: /harry potter|fantastic beasts|wizarding world/i },
@@ -19,8 +21,7 @@ const franchiseRules: { name: string; pattern: RegExp }[] = [
   { name: "Pirates of the Caribbean", pattern: /pirates of the caribbean/i },
   { name: "Indiana Jones", pattern: /indiana jones/i },
   { name: "The Hunger Games", pattern: /hunger games|ballad of songbirds/i },
-  { name: "Disney & Pixar", pattern: /toy story|cars|finding nemo|finding dory|incredibles|monsters[,\s]|inside out|frozen|moana|encanto|coco|ratatouille|wall[\s-]*e|up|a bug.s life|lightyear|elemental|pixar/i },
-  { name: "DreamWorks", pattern: /shrek|kung fu panda|how to train your dragon|madagascar|puss in boots|trolls|boss baby|dreamworks/i },
+  { name: "DreamWorks", pattern: /shrek|kung fu panda|how to train your dragon|madagascar|puss in boots|trolls|boss baby|croods|megamind|abominable|bad guys|dreamworks/i },
   { name: "Holiday", pattern: /christmas|holiday|santa|home alone|the grinch/i },
 ];
 
