@@ -8,6 +8,18 @@ import { pauseConversions } from "@/lib/media/conversion";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type PcJob = {
+  id: string;
+  source: string;
+  output?: string;
+  mode?: string;
+  status: "converting" | "copying" | "completed" | "failed";
+  error?: string;
+  startedAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+};
+
 async function controlRoot() {
   const mediaRoot = await fs.realpath(getMediaRoot());
   const root = path.join(mediaRoot, ".constants-hub", "pc-worker");
@@ -15,18 +27,37 @@ async function controlRoot() {
   return root;
 }
 
-async function readStatus(root: string) {
+async function readJson<T>(file: string, fallback: T): Promise<T> {
   try {
-    const raw = await fs.readFile(path.join(root, "status.json"), "utf8");
+    const raw = await fs.readFile(file, "utf8");
     const clean = raw.replace(/^\uFEFF/, "").trim();
-    return JSON.parse(clean) as Record<string, unknown>;
+    return clean ? JSON.parse(clean) as T : fallback;
   } catch {
-    return null;
+    return fallback;
   }
+}
+
+async function readStatus(root: string) {
+  return readJson<Record<string, unknown> | null>(path.join(root, "status.json"), null);
+}
+
+async function readHistory(root: string) {
+  return readJson<PcJob[]>(path.join(root, "history.json"), []);
+}
+
+async function writeHistory(root: string, jobs: PcJob[]) {
+  const file = path.join(root, "history.json");
+  const temp = `${file}.tmp`;
+  await fs.writeFile(temp, JSON.stringify(jobs.slice(0, 250), null, 2), "utf8");
+  await fs.rename(temp, file);
 }
 
 async function writeCommand(root: string, name: string) {
   await fs.writeFile(path.join(root, name), new Date().toISOString(), "utf8");
+}
+
+async function payload(root: string, enabled: boolean) {
+  return { success: true, enabled, status: await readStatus(root), history: await readHistory(root) };
 }
 
 export async function GET(request: NextRequest) {
@@ -34,7 +65,7 @@ export async function GET(request: NextRequest) {
   const root = await controlRoot();
   let enabled = false;
   try { await fs.access(path.join(root, "enabled")); enabled = true; } catch {}
-  return Response.json({ success: true, enabled, status: await readStatus(root) }, { headers: { "Cache-Control": "no-store" } });
+  return Response.json(await payload(root, enabled), { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: NextRequest) {
@@ -44,12 +75,21 @@ export async function POST(request: NextRequest) {
     const action = String(body.action || "");
     const root = await controlRoot();
 
+    if (action === "clear-completed" || action === "clear-failed") {
+      const target = action === "clear-completed" ? "completed" : "failed";
+      const history = (await readHistory(root)).filter((job) => job.status !== target);
+      await writeHistory(root, history);
+      let enabled = false;
+      try { await fs.access(path.join(root, "enabled")); enabled = true; } catch {}
+      return Response.json(await payload(root, enabled));
+    }
+
     if (["enable", "run-now", "pause", "resume", "stop"].includes(action)) {
       await fs.writeFile(path.join(root, "enabled"), new Date().toISOString(), "utf8");
       await pauseConversions();
     }
 
-    if (action === "enable") return Response.json({ success: true, enabled: true, status: await readStatus(root) });
+    if (action === "enable") return Response.json(await payload(root, true));
     if (action === "run-now") {
       await fs.rm(path.join(root, "PAUSE"), { force: true });
       await writeCommand(root, "RUN_NOW");
@@ -64,7 +104,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ success: false, error: "Unknown PC worker action." }, { status: 400 });
     }
 
-    return Response.json({ success: true, enabled: true, status: await readStatus(root) });
+    return Response.json(await payload(root, true));
   } catch (error) {
     return Response.json({ success: false, error: error instanceof Error ? error.message : "PC worker command failed." }, { status: 500 });
   }
