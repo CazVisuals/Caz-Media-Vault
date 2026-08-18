@@ -62,14 +62,15 @@ function Convert-One([IO.FileInfo]$File) {
   $archived=Join-Path $archiveDir $File.Name; if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}; Move-Item -LiteralPath $File.FullName -Destination $archived; Remove-Item -LiteralPath $tempDir -Recurse -Force; Save-State @{status='completed';source=$File.FullName;output=$dest;archived=$archived}; Write-Log "DONE $dest"; return $true
 }
 
-Write-Log "Worker starting. RunNow=$RunNow ForceWhenBusy=$ForceWhenBusy Once=$Once MediaRoot=$MediaRoot WorkRoot=$WorkRoot"; Save-State @{status='idle';source=$null}
+Write-Log "Worker starting. RunNow=$RunNow ForceWhenBusy=$ForceWhenBusy Once=$Once MediaRoot=$MediaRoot WorkRoot=$WorkRoot"
+$siteOverride = [bool]$RunNow
+Save-State @{status='idle';source=$null;override=$siteOverride}
 while($true){
-  if((Test-Path -LiteralPath $LocalStopFile) -or (Test-Path -LiteralPath $RemoteStopFile)){Remove-Item -LiteralPath $RemoteStopFile -Force -ErrorAction SilentlyContinue; Write-Log 'STOP command detected. Exiting.'; Save-State @{status='stopped'}; break}
-  if((Test-Path -LiteralPath $LocalPauseFile) -or (Test-Path -LiteralPath $RemotePauseFile)){Save-State @{status='paused'}; Start-Sleep -Seconds 5; continue}
-  $siteRunNow=Test-Path -LiteralPath $RemoteRunFile; if($siteRunNow){Remove-Item -LiteralPath $RemoteRunFile -Force -ErrorAction SilentlyContinue}
-  $effectiveRunNow=$RunNow -or $siteRunNow
-  $gpu=Get-GpuUtilization; if(!$ForceWhenBusy -and $gpu -ge $GpuBusyThreshold){Save-State @{status='waiting';reason="GPU busy at $gpu%"}; if($Once){break}; Start-Sleep -Seconds 10; continue}
-  if(!$effectiveRunNow){ if(!(In-Schedule)){Save-State @{status='waiting';reason='outside schedule'}; if($Once){break}; Start-Sleep -Seconds 5; continue}; if((Get-IdleSeconds) -lt ($IdleMinutes*60)){Save-State @{status='waiting';reason='PC active'}; if($Once){break}; Start-Sleep -Seconds 10; continue} }
-  $converted=$false; foreach($file in Get-Candidates){try{if(Convert-One $file){$converted=$true;break}}catch{Write-Log "ERROR $($file.FullName): $($_.Exception.Message)"; Save-State @{status='failed';source=$file.FullName;error=$_.Exception.Message}; Start-Sleep -Seconds 10}}
-  if($Once){break}; if(!$converted){Save-State @{status='idle';reason='no incompatible files found'}; Start-Sleep -Seconds 10}
+  if((Test-Path -LiteralPath $LocalStopFile) -or (Test-Path -LiteralPath $RemoteStopFile)){Remove-Item -LiteralPath $RemoteStopFile -Force -ErrorAction SilentlyContinue; Write-Log 'STOP command detected. Exiting.'; Save-State @{status='stopped';override=$false}; break}
+  if(Test-Path -LiteralPath $RemoteRunFile){Remove-Item -LiteralPath $RemoteRunFile -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $RemotePauseFile -Force -ErrorAction SilentlyContinue; $siteOverride=$true; Write-Log 'Convert Now command detected. Daytime override enabled.'}
+  if((Test-Path -LiteralPath $LocalPauseFile) -or (Test-Path -LiteralPath $RemotePauseFile)){$siteOverride=$false; Save-State @{status='paused';override=$false}; Start-Sleep -Seconds 5; continue}
+  $gpu=Get-GpuUtilization; if(!$ForceWhenBusy -and $gpu -ge $GpuBusyThreshold){Save-State @{status='waiting';reason="GPU busy at $gpu%";override=$siteOverride}; if($Once){break}; Start-Sleep -Seconds 10; continue}
+  if(!$siteOverride){ if(!(In-Schedule)){Save-State @{status='waiting';reason='outside schedule';override=$false}; if($Once){break}; Start-Sleep -Seconds 5; continue}; if((Get-IdleSeconds) -lt ($IdleMinutes*60)){Save-State @{status='waiting';reason='PC active';override=$false}; if($Once){break}; Start-Sleep -Seconds 10; continue} }
+  $converted=$false; foreach($file in Get-Candidates){try{if(Convert-One $file){$converted=$true;break}}catch{Write-Log "ERROR $($file.FullName): $($_.Exception.Message)"; Save-State @{status='failed';source=$file.FullName;error=$_.Exception.Message;override=$siteOverride}; Start-Sleep -Seconds 10}}
+  if($Once){break}; if(!$converted){Save-State @{status='idle';reason='no incompatible files found';override=$siteOverride}; Start-Sleep -Seconds 10}
 }
