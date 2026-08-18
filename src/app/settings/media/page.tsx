@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Movie } from "@/lib/media/types";
 import type { MediaProbe } from "@/lib/media/probe";
 
@@ -26,6 +26,30 @@ export default function MediaToolsPage() {
   const [pcOnline, setPcOnline] = useState(false);
   const [pcBusy, setPcBusy] = useState(false);
   const [pcMessage, setPcMessage] = useState("");
+  const libraryRefreshInFlight = useRef(false);
+  const previousPcSource = useRef("");
+
+  async function refreshLibrary() {
+    if (libraryRefreshInFlight.current) return;
+    libraryRefreshInFlight.current = true;
+    try {
+      const response = await fetch("/api/media/library", { cache: "no-store" });
+      const result = await response.json() as { movies?: Movie[]; error?: string };
+      if (!response.ok) throw new Error(result.error || "Library unavailable.");
+      const inspections = await Promise.all((result.movies || []).map(async (movie) => {
+        try {
+          const probeResponse = await fetch(`/api/media/inspect?path=${encodeURIComponent(movie.relativePath)}`, { cache: "no-store" });
+          const probeResult = await probeResponse.json() as { probe?: MediaProbe; error?: string };
+          return probeResponse.ok && probeResult.probe ? { movie, probe: probeResult.probe } : { movie, error: probeResult.error || "Inspection failed." };
+        } catch {
+          return { movie, error: "Inspection failed." };
+        }
+      }));
+      setItems(inspections);
+    } finally {
+      libraryRefreshInFlight.current = false;
+    }
+  }
 
   async function refreshPc() {
     const response = await fetch("/api/admin/pc-worker", { cache: "no-store" });
@@ -34,22 +58,12 @@ export default function MediaToolsPage() {
     setPcWorker(result);
     const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
     setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
-  }
 
-  async function refreshLibrary() {
-    const response = await fetch("/api/media/library", { cache: "no-store" });
-    const result = await response.json() as { movies?: Movie[]; error?: string };
-    if (!response.ok) throw new Error(result.error || "Library unavailable.");
-    const inspections = await Promise.all((result.movies || []).map(async (movie) => {
-      try {
-        const probeResponse = await fetch(`/api/media/inspect?path=${encodeURIComponent(movie.relativePath)}`, { cache: "no-store" });
-        const probeResult = await probeResponse.json() as { probe?: MediaProbe; error?: string };
-        return probeResponse.ok && probeResult.probe ? { movie, probe: probeResult.probe } : { movie, error: probeResult.error || "Inspection failed." };
-      } catch {
-        return { movie, error: "Inspection failed." };
-      }
-    }));
-    setItems(inspections);
+    const source = result.status?.source || "";
+    if (source && previousPcSource.current && source !== previousPcSource.current) {
+      void refreshLibrary().catch(() => undefined);
+    }
+    previousPcSource.current = source;
   }
 
   useEffect(() => {
@@ -65,7 +79,7 @@ export default function MediaToolsPage() {
     }
     void load();
     const pcInterval = window.setInterval(() => { if (active) void refreshPc(); }, 3000);
-    const libraryInterval = window.setInterval(() => { if (active) void refreshLibrary().catch(() => undefined); }, 20000);
+    const libraryInterval = window.setInterval(() => { if (active) void refreshLibrary().catch(() => undefined); }, 30000);
     return () => {
       active = false;
       window.clearInterval(pcInterval);
