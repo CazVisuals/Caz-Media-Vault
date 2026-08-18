@@ -11,6 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$WorkerVersion = "2026.08.17.4"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $StateFile = Join-Path $WorkRoot 'worker-state.json'
 $LogFile = Join-Path $WorkRoot 'worker.log'
@@ -32,19 +33,31 @@ function Write-Log([string]$Message) {
   Add-Content -Path $LogFile -Value $line
   Write-Host $line
 }
-function Write-AtomicJson([string]$Path,[string]$Json) {
+function Write-JsonFile([string]$Path,[string]$Json) {
   $temp = "$Path.$PID.tmp"
   [IO.File]::WriteAllText($temp,$Json,$Utf8NoBom)
-  Move-Item -LiteralPath $temp -Destination $Path -Force
+  try {
+    if(Test-Path -LiteralPath $Path) {
+      [IO.File]::Replace($temp,$Path,$null,$true)
+    } else {
+      [IO.File]::Move($temp,$Path)
+    }
+  } catch {
+    # Some SMB/NAS implementations do not support File.Replace reliably.
+    # Fall back to a direct complete write rather than losing status/history.
+    [IO.File]::WriteAllText($Path,$Json,$Utf8NoBom)
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+  }
 }
 function Save-State([hashtable]$State) {
   $script:HeartbeatSequence++
   $State.updatedAt = (Get-Date).ToString('o')
   $State.computer = $env:COMPUTERNAME
   $State.heartbeat = $script:HeartbeatSequence
+  $State.workerVersion = $WorkerVersion
   $json = $State | ConvertTo-Json -Depth 6
   [IO.File]::WriteAllText($StateFile,$json,$Utf8NoBom)
-  try { Write-AtomicJson $ControlStatus $json } catch { Write-Log "WARN could not publish status: $($_.Exception.Message)" }
+  try { Write-JsonFile $ControlStatus $json } catch { Write-Log "WARN could not publish status: $($_.Exception.Message)" }
 }
 function Read-History {
   try {
@@ -69,7 +82,7 @@ function Update-History([hashtable]$Job) {
       $history = @($record) + $history
     }
     $json = @($history | Select-Object -First 250) | ConvertTo-Json -Depth 6
-    Write-AtomicJson $HistoryFile $json
+    Write-JsonFile $HistoryFile $json
   } catch { Write-Log "WARN could not update history: $($_.Exception.Message)" }
 }
 function Get-IdleSeconds {
@@ -100,19 +113,30 @@ function Get-Candidates {
     if($VideoExtensions -notcontains $_.Extension.ToLowerInvariant()){return $false}; if($_.FullName -like "$MediaRoot\.constants-hub\*"){return $false}; if($_.Name -like '* - NVENC TEST.mp4' -or $_.Name -like '* - NVENC LOCAL TEST.mp4'){return $false}; if($_.Extension.ToLowerInvariant() -ne '.mp4'){ $sameNameMp4=Join-Path $_.DirectoryName (([IO.Path]::GetFileNameWithoutExtension($_.Name))+'.mp4'); if(Test-Path -LiteralPath $sameNameMp4){return $false} }; return $true
   } | Sort-Object LastWriteTime
 }
+function Quote-ProcessArgument([string]$Value) {
+  if($null -eq $Value){return '""'}
+  return '"' + ($Value -replace '(\\*)"','$1$1\"' -replace '(\\+)$','$1$1') + '"'
+}
 function Invoke-FfmpegWithHeartbeat([string[]]$Arguments,[hashtable]$State) {
-  $quoted = $Arguments | ForEach-Object { '"' + ($_ -replace '"','\"') + '"' }
-  $process = Start-Process -FilePath 'ffmpeg.exe' -ArgumentList ($quoted -join ' ') -NoNewWindow -PassThru
+  $argumentLine = ($Arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join ' '
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = 'ffmpeg.exe'
+  $psi.Arguments = $argumentLine
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $false
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = $psi
+  if(!$process.Start()){ throw 'Could not start ffmpeg.exe' }
   try {
-    while(!$process.HasExited) {
+    while(!$process.WaitForExit(3000)) {
       Save-State $State
-      Start-Sleep -Seconds 3
-      $process.Refresh()
     }
     $process.WaitForExit()
-    if($process.ExitCode -ne 0){ throw "ffmpeg exited with code $($process.ExitCode)" }
+    $exitCode = [int]$process.ExitCode
+    if($exitCode -ne 0){ throw "ffmpeg exited with code $exitCode" }
   } finally {
     if(!$process.HasExited){ try { $process.Kill() } catch {} }
+    $process.Dispose()
   }
 }
 function Convert-One([IO.FileInfo]$File,[bool]$OverrideActive) {
@@ -163,7 +187,7 @@ function Convert-One([IO.FileInfo]$File,[bool]$OverrideActive) {
   }
 }
 
-Write-Log "Worker starting. RunNow=$RunNow ForceWhenBusy=$ForceWhenBusy Once=$Once MediaRoot=$MediaRoot WorkRoot=$WorkRoot"
+Write-Log "Worker $WorkerVersion starting. RunNow=$RunNow ForceWhenBusy=$ForceWhenBusy Once=$Once MediaRoot=$MediaRoot WorkRoot=$WorkRoot"
 $siteOverride = [bool]$RunNow
 Save-State @{status='idle';source=$null;override=$siteOverride}
 while($true){
