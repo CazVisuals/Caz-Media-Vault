@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$MaintenanceVersion = "2026.09.05.2"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $ControlRoot = Join-Path $MediaRoot '.constants-hub\pc-worker'
 $ReportFile = Join-Path $ControlRoot 'maintenance.json'
@@ -69,7 +70,7 @@ function Test-MobileReady([string]$Path) {
 }
 
 $startedAt = (Get-Date).ToString('o')
-Write-Log 'weekly full compatibility and duplicate sweep starting'
+Write-Log "weekly full compatibility and duplicate sweep starting (version $MaintenanceVersion)"
 Write-MaintenanceProgress 'running' 'Discovering media files' 0 0 0
 
 $files = @(Get-ChildItem -LiteralPath $MediaRoot -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
@@ -137,7 +138,7 @@ $report = [pscustomobject]@{
   probeErrors = $probeErrors.Count
   exactDuplicatesRemoved = $duplicatesRemoved.Count
   duplicatePolicy = 'Exact same size + SHA256 only; extra copies moved out of the active library to .constants-hub\duplicates for recovery.'
-  incompatibleFiles = @($incompatible)
+  incompatibleFiles = @($incompatible | ForEach-Object { $_ })
   errors = @($probeErrors | Select-Object -First 100)
   duplicates = @($duplicatesRemoved | Select-Object -First 250)
 }
