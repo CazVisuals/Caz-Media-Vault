@@ -26,6 +26,7 @@ export default function MediaToolsPage() {
   const [pcOnline, setPcOnline] = useState(false);
   const [pcBusy, setPcBusy] = useState(false);
   const [pcMessage, setPcMessage] = useState("");
+  const [visibleQueueCount, setVisibleQueueCount] = useState(50);
   const [libraryRefreshing, setLibraryRefreshing] = useState(false);
   const libraryRefreshInFlight = useRef(false);
 
@@ -62,24 +63,29 @@ export default function MediaToolsPage() {
     }
   }
 
-  async function refreshPc() {
-    const response = await fetch("/api/admin/pc-worker", { cache: "no-store" });
+  async function refreshPc(details = false) {
+    const response = await fetch(`/api/admin/pc-worker?details=${details ? "1" : "0"}`, { cache: "no-store" });
     if (!response.ok) return;
     const result = await response.json() as PcWorker;
-    setPcWorker(result);
+    setPcWorker((current) => details || !current ? result : {
+      ...current,
+      ...result,
+      history: current.history,
+      maintenance: current.maintenance ? { ...current.maintenance, ...result.maintenance } : result.maintenance,
+    });
     const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
-    setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
+    setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 90000));
   }
 
   useEffect(() => {
     let active = true;
     async function load() {
-      try { await refreshPc(); }
+      try { await refreshPc(true); }
       catch (reason) { if (active) setError(reason instanceof Error ? reason.message : "Media inspection failed."); }
       finally { if (active) setLoading(false); }
     }
     void load();
-    const pcInterval = window.setInterval(() => { if (active) void refreshPc(); }, 3000);
+    const pcInterval = window.setInterval(() => { if (active) void refreshPc(false); }, 30000);
     return () => { active = false; window.clearInterval(pcInterval); };
   }, []);
 
@@ -91,7 +97,7 @@ export default function MediaToolsPage() {
       if (!response.ok || !result.success) throw new Error(result.error || "PC worker command failed.");
       setPcWorker(result);
       const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
-      setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 30000));
+      setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 90000));
       setPcMessage(
         action === "run-now" ? "Daytime Convert Now enabled." :
         action === "end-override" ? "Daytime override will end after the current file; overnight automation stays enabled." :
@@ -158,8 +164,9 @@ export default function MediaToolsPage() {
 
     {!loading ? <section className="admin-panel"><div className="queue-heading"><div><p className="eyebrow">CAZ-PC QUEUE</p><h2>{remaining ? `${remaining} waiting for conversion` : total ? "All reported media is ready" : "Run a compatibility scan for file details"}</h2></div><div className="queue-actions"><button className="secondary-button" disabled={pcBusy || completedHistory.length === 0} onClick={() => void pcCommand("clear-completed")}>Clear completed</button><button className="secondary-button" disabled={pcBusy || failedHistory.length === 0} onClick={() => void pcCommand("clear-failed")}>Clear failed</button></div></div>
       {pending.map(({ movie, probe }) => { const isCurrent = Boolean(currentSource && sourceMatches(movie.relativePath, currentSource)); const isFailed = isCurrent && pc?.status === "failed"; const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? `Converting${typeof pc?.progress === "number" ? ` · ${pc.progress}%` : ""}` : "Queued"; const statusClass = isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued"; return <div className="queue-row" key={movie.id}><div><strong>{movie.relativePath}</strong><small>{isFailed ? (pc?.error || pc?.reason || modeLabel(probe?.conversionMode || undefined)) : modeLabel(probe?.conversionMode || undefined)}</small></div><span className={statusClass}>{label}</span><div className="job-progress"><span style={{ width: `${isCurrent && pc?.status === "converting" ? pc.progress || 0 : 0}%` }} /></div></div>; })}
-      {!usingFreshInspection ? reportedPending.map((file) => { const isCurrent = Boolean(currentSource && sameSource(file.path, currentSource)); const isFailed = isCurrent && pc?.status === "failed"; const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? `Converting${typeof pc?.progress === "number" ? ` · ${pc.progress}%` : ""}` : "Waiting"; return <div className="queue-row" key={file.path}><div><strong>{displaySource(file.path)}</strong><small>{isFailed ? pc?.error || pc?.reason || "Conversion failed" : isCurrent ? modeLabel(pc?.mode) : "Needs conversion"}</small></div><span className={isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued"}>{label}</span><div className="job-progress"><span style={{ width: `${isCurrent && pc?.status === "converting" ? pc.progress || 0 : 0}%` }} /></div></div>; }) : null}
-      {completedHistory.map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{modeLabel(job.mode)}</small></div><span className="queue-completed">Completed</span><div className="job-progress"><span style={{ width: "100%" }} /></div></div>)}
+      {!usingFreshInspection ? reportedPending.slice(0, visibleQueueCount).map((file) => { const isCurrent = Boolean(currentSource && sameSource(file.path, currentSource)); const isFailed = isCurrent && pc?.status === "failed"; const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? `Converting${typeof pc?.progress === "number" ? ` · ${pc.progress}%` : ""}` : "Waiting"; return <div className="queue-row" key={file.path}><div><strong>{displaySource(file.path)}</strong><small>{isFailed ? pc?.error || pc?.reason || "Conversion failed" : isCurrent ? modeLabel(pc?.mode) : "Needs conversion"}</small></div><span className={isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued"}>{label}</span><div className="job-progress"><span style={{ width: `${isCurrent && pc?.status === "converting" ? pc.progress || 0 : 0}%` }} /></div></div>; }) : null}
+      {!usingFreshInspection && reportedPending.length > visibleQueueCount ? <button className="secondary-button" onClick={() => setVisibleQueueCount((count) => count + 50)}>Show 50 more ({reportedPending.length - visibleQueueCount} remaining)</button> : null}
+      {completedHistory.slice(0, visibleQueueCount).map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{modeLabel(job.mode)}</small></div><span className="queue-completed">Completed</span><div className="job-progress"><span style={{ width: "100%" }} /></div></div>)}
       {failedHistory.filter((job) => !pending.some((item) => sourceMatches(item.movie.relativePath, job.source))).map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{job.error || modeLabel(job.mode)}</small></div><span className="queue-failed">Failed</span><div className="job-progress"><span style={{ width: "0%" }} /></div></div>)}
       {!pending.length && !reportedPending.length && !completedHistory.length && !failedHistory.length ? <div className="state-card"><strong>Queue complete</strong><small>CAZ-PC has no incompatible files waiting in the last scan.</small></div> : null}</section> : null}
 

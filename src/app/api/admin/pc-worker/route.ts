@@ -62,13 +62,25 @@ async function writeHistory(root: string, jobs: PcJob[]) {
 
 async function writeCommand(root: string, name: string) { await fs.writeFile(path.join(root, name), new Date().toISOString(), "utf8"); }
 
-async function payload(root: string, enabled: boolean) {
+async function payload(root: string, enabled: boolean, details = true) {
+  const maintenance = await readMaintenance(root);
+  const maintenanceSummary = maintenance ? {
+    status: maintenance.status,
+    startedAt: maintenance.startedAt,
+    completedAt: maintenance.completedAt,
+    scanned: maintenance.scanned,
+    mobileReady: maintenance.mobileReady,
+    incompatible: maintenance.incompatible,
+    probeErrors: maintenance.probeErrors,
+    exactDuplicatesRemoved: maintenance.exactDuplicatesRemoved,
+    duplicatePolicy: maintenance.duplicatePolicy,
+  } : null;
   return {
     success: true,
     enabled,
     status: await readStatus(root),
-    history: await readHistory(root),
-    maintenance: await readMaintenance(root),
+    history: details ? await readHistory(root) : undefined,
+    maintenance: details ? maintenance : maintenanceSummary,
   };
 }
 
@@ -77,7 +89,8 @@ export async function GET(request: NextRequest) {
   const root = await controlRoot();
   let enabled = false;
   try { await fs.access(path.join(root, "enabled")); enabled = true; } catch {}
-  return Response.json(await payload(root, enabled), { headers: { "Cache-Control": "no-store" } });
+  const details = new URL(request.url).searchParams.get("details") !== "0";
+  return Response.json(await payload(root, enabled, details), { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: NextRequest) {
