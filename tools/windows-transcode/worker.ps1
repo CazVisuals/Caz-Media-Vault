@@ -11,7 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$WorkerVersion = "2026.09.05.1"
+$WorkerVersion = "2026.09.05.2"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $StateFile = Join-Path $WorkRoot 'worker-state.json'
 $LogFile = Join-Path $WorkRoot 'worker.log'
@@ -125,7 +125,8 @@ function Invoke-FfmpegWithHeartbeat([string[]]$Arguments,[hashtable]$State) {
 }
 function Convert-One([IO.FileInfo]$File,[bool]$OverrideActive) {
   $mode=Get-Mode $File.FullName; if($mode -eq 'skip'){return $false}; $relative=$File.FullName.Substring($MediaRoot.Length).TrimStart('\'); $relativeDir=Split-Path $relative -Parent; $baseName=[IO.Path]::GetFileNameWithoutExtension($File.Name); $tempDir=Join-Path $WorkRoot ([Guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Force $tempDir|Out-Null; $tempOutput=Join-Path $tempDir "$baseName.mp4"; $destDir=if($relativeDir){Join-Path $MediaRoot $relativeDir}else{$MediaRoot}; $dest=Join-Path $destDir "$baseName.mp4"; $archiveDir=if($relativeDir){Join-Path $MediaRoot (Join-Path '.constants-hub\originals' $relativeDir)}else{Join-Path $MediaRoot '.constants-hub\originals'}; New-Item -ItemType Directory -Force $archiveDir|Out-Null
-  if(Test-Path -LiteralPath $dest){
+  $sameSourceDestination=[string]::Equals($dest,$File.FullName,[StringComparison]::OrdinalIgnoreCase)
+  if(!$sameSourceDestination -and (Test-Path -LiteralPath $dest)){
     if(Test-Output $dest $File.FullName){Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue; return $false}
     $failedDir=if($relativeDir){Join-Path $MediaRoot (Join-Path '.constants-hub\failed-outputs' $relativeDir)}else{Join-Path $MediaRoot '.constants-hub\failed-outputs'}
     New-Item -ItemType Directory -Force $failedDir|Out-Null
@@ -137,7 +138,33 @@ function Convert-One([IO.FileInfo]$File,[bool]$OverrideActive) {
   $jobId=[Guid]::NewGuid().ToString('N'); Update-History @{id=$jobId;source=$File.FullName;output=$dest;mode=$mode;status='converting';progress=0;durationSeconds=$sourceDuration;startedAt=(Get-Date).ToString('o')}; $active=@{status='converting';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId;progress=0;durationSeconds=$sourceDuration}; Save-State $active; Write-Log "START [$mode] $($File.FullName)"
   try {
     if($mode -eq 'transcode'){$args=@('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} elseif($mode -eq 'audio'){$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} else {$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','copy','-movflags','+faststart',$tempOutput)}
-    Invoke-FfmpegWithHeartbeat $args $active; if(!(Test-Output $tempOutput $File.FullName)){throw "verification failed: output is unreadable, incompatible, or does not match source duration"}; Wait-ForPlaybackIdle $active; Update-History @{id=$jobId;status='copying'}; Save-State @{status='copying';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}; Copy-Item -LiteralPath $tempOutput -Destination $dest -Force; if(!(Test-Output $dest $File.FullName)){Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue; throw "NAS copy verification failed: copied output is incomplete or does not match source duration"}; $archived=Join-Path $archiveDir $File.Name; if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}; Move-Item -LiteralPath $File.FullName -Destination $archived; Remove-Item -LiteralPath $tempDir -Recurse -Force; Update-History @{id=$jobId;status='completed';completedAt=(Get-Date).ToString('o')}; Save-State @{status='completed';source=$File.FullName;mode=$mode;output=$dest;archived=$archived;override=$OverrideActive;jobId=$jobId}; Write-Log "DONE $dest"; return $true
+    Invoke-FfmpegWithHeartbeat $args $active
+    if(!(Test-Output $tempOutput $File.FullName)){throw "verification failed: output is unreadable, incompatible, or does not match source duration"}
+    Wait-ForPlaybackIdle $active
+    Update-History @{id=$jobId;status='copying'}
+    Save-State @{status='copying';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}
+    $archived=Join-Path $archiveDir $File.Name
+    if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}
+    if($sameSourceDestination){
+      Move-Item -LiteralPath $File.FullName -Destination $archived
+      try {
+        Copy-Item -LiteralPath $tempOutput -Destination $dest
+        if(!(Test-Output $dest $archived)){throw "NAS copy verification failed: copied output is incomplete or does not match source duration"}
+      } catch {
+        Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+        Move-Item -LiteralPath $archived -Destination $File.FullName -ErrorAction SilentlyContinue
+        throw
+      }
+    } else {
+      Copy-Item -LiteralPath $tempOutput -Destination $dest -Force
+      if(!(Test-Output $dest $File.FullName)){Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue; throw "NAS copy verification failed: copied output is incomplete or does not match source duration"}
+      Move-Item -LiteralPath $File.FullName -Destination $archived
+    }
+    Remove-Item -LiteralPath $tempDir -Recurse -Force
+    Update-History @{id=$jobId;status='completed';progress=100;completedAt=(Get-Date).ToString('o')}
+    Save-State @{status='completed';source=$File.FullName;mode=$mode;output=$dest;archived=$archived;override=$OverrideActive;jobId=$jobId;progress=100}
+    Write-Log "DONE $dest"
+    return $true
   } catch { $message=$_.Exception.Message; Update-History @{id=$jobId;status='failed';error=$message}; Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue; throw }
 }
 function Invoke-Maintenance {
