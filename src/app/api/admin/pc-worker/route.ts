@@ -33,6 +33,17 @@ type MaintenanceReport = {
   incompatibleFiles?: { path: string; size?: number }[];
 };
 
+type MaintenanceProgress = {
+  status?: string;
+  phase?: string;
+  progress?: number;
+  scanned?: number;
+  total?: number;
+  currentFile?: string;
+  startedAt?: string;
+  updatedAt?: string;
+};
+
 async function controlRoot() {
   const mediaRoot = await fs.realpath(getMediaRoot());
   const root = path.join(mediaRoot, ".constants-hub", "pc-worker");
@@ -53,6 +64,7 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
 async function readStatus(root: string) { return readJson<Record<string, unknown> | null>(path.join(root, "status.json"), null); }
 async function readHistory(root: string) { return readJson<PcJob[]>(path.join(root, "history.json"), []); }
 async function readMaintenance(root: string) { return readJson<MaintenanceReport | null>(path.join(root, "maintenance.json"), null); }
+async function readMaintenanceProgress(root: string) { return readJson<MaintenanceProgress | null>(path.join(root, "maintenance-progress.json"), null); }
 
 async function writeHistory(root: string, jobs: PcJob[]) {
   const file = path.join(root, "history.json");
@@ -85,6 +97,7 @@ async function payload(root: string, enabled: boolean, details = true, offset = 
       ...maintenanceSummary,
       incompatibleFiles: maintenance.incompatibleFiles?.slice(offset, offset + limit),
     } : maintenanceSummary,
+    maintenanceProgress: await readMaintenanceProgress(root),
   };
 }
 

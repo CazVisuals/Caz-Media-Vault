@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $ControlRoot = Join-Path $MediaRoot '.constants-hub\pc-worker'
 $ReportFile = Join-Path $ControlRoot 'maintenance.json'
+$ProgressFile = Join-Path $ControlRoot 'maintenance-progress.json'
 $DuplicateRoot = Join-Path $MediaRoot '.constants-hub\duplicates'
 $LogFile = Join-Path $WorkRoot 'worker.log'
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -32,6 +33,26 @@ function Write-JsonFile([string]$Path,[object]$Value) {
   }
 }
 
+function Write-MaintenanceProgress(
+  [string]$Status,
+  [string]$Phase,
+  [int]$Progress,
+  [int]$Scanned,
+  [int]$Total,
+  [string]$CurrentFile = ''
+) {
+  Write-JsonFile $ProgressFile ([pscustomobject]@{
+    status = $Status
+    phase = $Phase
+    progress = [Math]::Max(0,[Math]::Min(100,$Progress))
+    scanned = $Scanned
+    total = $Total
+    currentFile = $CurrentFile
+    startedAt = $startedAt
+    updatedAt = (Get-Date).ToString('o')
+  })
+}
+
 function Get-Probe([string]$Path) {
   $json = & ffprobe -v error -show_entries format=format_name,duration:stream=index,codec_type,codec_name,pix_fmt -of json -- "$Path"
   if($LASTEXITCODE -ne 0){ throw "ffprobe failed" }
@@ -49,6 +70,7 @@ function Test-MobileReady([string]$Path) {
 
 $startedAt = (Get-Date).ToString('o')
 Write-Log 'weekly full compatibility and duplicate sweep starting'
+Write-MaintenanceProgress 'running' 'Discovering media files' 0 0 0
 
 $files = @(Get-ChildItem -LiteralPath $MediaRoot -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
   $VideoExtensions -contains $_.Extension.ToLowerInvariant() -and $_.FullName -notlike "$MediaRoot\.constants-hub\*"
@@ -57,6 +79,8 @@ $files = @(Get-ChildItem -LiteralPath $MediaRoot -Recurse -File -ErrorAction Sil
 $ready = 0
 $incompatible = New-Object System.Collections.Generic.List[object]
 $probeErrors = New-Object System.Collections.Generic.List[object]
+$scannedCount = 0
+$lastProgressWrite = [DateTime]::MinValue
 foreach($file in $files){
   try {
     if(Test-MobileReady $file.FullName){ $ready++ }
@@ -64,10 +88,18 @@ foreach($file in $files){
   } catch {
     $probeErrors.Add([pscustomobject]@{ path=$file.FullName; error=$_.Exception.Message })
   }
+  $scannedCount++
+  if($scannedCount -eq $files.Count -or ((Get-Date) - $lastProgressWrite).TotalSeconds -ge 1){
+    $scanProgress = if($files.Count){ [int][Math]::Floor(($scannedCount / $files.Count) * 90) } else { 90 }
+    Write-MaintenanceProgress 'running' 'Checking compatibility' $scanProgress $scannedCount $files.Count $file.FullName
+    $lastProgressWrite = Get-Date
+  }
 }
 
 $duplicatesRemoved = New-Object System.Collections.Generic.List[object]
 $duplicateGroups = @($files | Group-Object Length | Where-Object { $_.Count -gt 1 -and [int64]$_.Name -gt 0 })
+$duplicateGroupIndex = 0
+Write-MaintenanceProgress 'running' 'Checking exact duplicates' 90 $scannedCount $files.Count
 foreach($sizeGroup in $duplicateGroups){
   $hashed = foreach($file in $sizeGroup.Group){
     try { [pscustomobject]@{ file=$file; hash=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash } }
@@ -90,6 +122,9 @@ foreach($sizeGroup in $duplicateGroups){
       Write-Log "exact duplicate quarantined: $($duplicate.FullName)"
     }
   }
+  $duplicateGroupIndex++
+  $duplicateProgress = if($duplicateGroups.Count){ 90 + [int][Math]::Floor(($duplicateGroupIndex / $duplicateGroups.Count) * 9) } else { 99 }
+  Write-MaintenanceProgress 'running' 'Checking exact duplicates' $duplicateProgress $scannedCount $files.Count
 }
 
 $report = [pscustomobject]@{
@@ -102,9 +137,10 @@ $report = [pscustomobject]@{
   probeErrors = $probeErrors.Count
   exactDuplicatesRemoved = $duplicatesRemoved.Count
   duplicatePolicy = 'Exact same size + SHA256 only; extra copies moved out of the active library to .constants-hub\duplicates for recovery.'
-  incompatibleFiles = @($incompatible | Select-Object -First 250)
+  incompatibleFiles = @($incompatible)
   errors = @($probeErrors | Select-Object -First 100)
   duplicates = @($duplicatesRemoved | Select-Object -First 250)
 }
 Write-JsonFile $ReportFile $report
+Write-MaintenanceProgress 'completed' 'Maintenance complete' 100 $files.Count $files.Count
 Write-Log "completed: scanned=$($files.Count) ready=$ready incompatible=$($incompatible.Count) duplicates=$($duplicatesRemoved.Count) errors=$($probeErrors.Count)"
