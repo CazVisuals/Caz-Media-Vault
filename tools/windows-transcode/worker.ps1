@@ -11,7 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$WorkerVersion = "2026.08.18.2"
+$WorkerVersion = "2026.09.05.1"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $StateFile = Join-Path $WorkRoot 'worker-state.json'
 $LogFile = Join-Path $WorkRoot 'worker.log'
@@ -29,9 +29,10 @@ $RemoteMaintenanceFile = Join-Path $ControlRoot 'RUN_MAINTENANCE'
 $MaintenanceMarker = Join-Path $WorkRoot 'weekly-maintenance-date.txt'
 $MaintenanceScript = Join-Path $PSScriptRoot 'maintenance.ps1'
 
-New-Item -ItemType Directory -Force $WorkRoot,$ControlRoot | Out-Null
+New-Item -ItemType Directory -Force $WorkRoot | Out-Null
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:HeartbeatSequence = 0
+$script:LastRemoteWarning = [datetime]::MinValue
 
 function Write-Log([string]$Message) { $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $Message"; Add-Content -Path $LogFile -Value $line; Write-Host $line }
 function Write-JsonFile([string]$Path,[string]$Json) {
@@ -41,7 +42,17 @@ function Write-JsonFile([string]$Path,[string]$Json) {
 }
 function Save-State([hashtable]$State) {
   $script:HeartbeatSequence++; $State.updatedAt=(Get-Date).ToString('o'); $State.computer=$env:COMPUTERNAME; $State.heartbeat=$script:HeartbeatSequence; $State.workerVersion=$WorkerVersion
-  $json=$State|ConvertTo-Json -Depth 6; [IO.File]::WriteAllText($StateFile,$json,$Utf8NoBom); try { Write-JsonFile $ControlStatus $json } catch { Write-Log "WARN could not publish status: $($_.Exception.Message)" }
+  $json=$State|ConvertTo-Json -Depth 6; [IO.File]::WriteAllText($StateFile,$json,$Utf8NoBom)
+  try {
+    if (!(Test-Path -LiteralPath $MediaRoot)) { throw "NAS media share is unavailable: $MediaRoot" }
+    New-Item -ItemType Directory -Force $ControlRoot | Out-Null
+    Write-JsonFile $ControlStatus $json
+  } catch {
+    if (((Get-Date) - $script:LastRemoteWarning).TotalSeconds -ge 60) {
+      $script:LastRemoteWarning = Get-Date
+      Write-Log "WARN could not publish heartbeat to NAS: $($_.Exception.Message)"
+    }
+  }
 }
 function Read-History { try { if(!(Test-Path -LiteralPath $HistoryFile)){return @()}; $raw=Get-Content -LiteralPath $HistoryFile -Raw; if([string]::IsNullOrWhiteSpace($raw)){return @()}; return @($raw|ConvertFrom-Json) } catch { return @() } }
 function Update-History([hashtable]$Job) {
@@ -75,21 +86,58 @@ function Wait-ForPlaybackIdle([hashtable]$State) {
   }
   if($logged){Write-Log 'Playback idle. Resuming conversion delivery.'}
 }
-function Get-Probe([string]$Path) { $json=& ffprobe -v error -show_entries format=format_name:stream=index,codec_type,codec_name,pix_fmt -of json -- "$Path"; if($LASTEXITCODE -ne 0){throw "ffprobe failed for $Path"}; return $json|ConvertFrom-Json }
+function Get-Probe([string]$Path) { $json=& ffprobe -v error -show_entries format=format_name,duration:stream=index,codec_type,codec_name,pix_fmt -of json -- "$Path"; if($LASTEXITCODE -ne 0){throw "ffprobe failed for $Path"}; return $json|ConvertFrom-Json }
 function Get-Mode([string]$Path) { $probe=Get-Probe $Path; $video=$probe.streams|Where-Object codec_type -eq 'video'|Select-Object -First 1; $audio=$probe.streams|Where-Object codec_type -eq 'audio'|Select-Object -First 1; $ext=[IO.Path]::GetExtension($Path).ToLowerInvariant(); $videoOk=$video -and $video.codec_name -eq 'h264' -and (!$video.pix_fmt -or $video.pix_fmt -eq 'yuv420p'); $audioOk=!$audio -or $audio.codec_name -eq 'aac'; if($ext -eq '.mp4' -and $videoOk -and $audioOk){return 'skip'}; if($videoOk -and $audioOk){return 'remux'}; if($videoOk){return 'audio'}; return 'transcode' }
-function Test-Output([string]$Path) { $probe=Get-Probe $Path; $video=$probe.streams|Where-Object codec_type -eq 'video'|Select-Object -First 1; $audio=$probe.streams|Where-Object codec_type -eq 'audio'|Select-Object -First 1; return $video -and $video.codec_name -eq 'h264' -and (!$video.pix_fmt -or $video.pix_fmt -eq 'yuv420p') -and (!$audio -or $audio.codec_name -eq 'aac') }
-function Get-Candidates { Get-ChildItem -LiteralPath $MediaRoot -Recurse -File -ErrorAction SilentlyContinue|Where-Object { if($VideoExtensions -notcontains $_.Extension.ToLowerInvariant()){return $false}; if($_.FullName -like "$MediaRoot\.constants-hub\*"){return $false}; if($_.Name -like '* - NVENC TEST.mp4' -or $_.Name -like '* - NVENC LOCAL TEST.mp4'){return $false}; if($_.Extension.ToLowerInvariant() -ne '.mp4'){ $sameNameMp4=Join-Path $_.DirectoryName (([IO.Path]::GetFileNameWithoutExtension($_.Name))+'.mp4'); if(Test-Path -LiteralPath $sameNameMp4){return $false} }; return $true }|Sort-Object LastWriteTime }
+function Test-Output([string]$Path,[string]$SourcePath=$null) {
+  try {
+    $probe=Get-Probe $Path; $video=$probe.streams|Where-Object codec_type -eq 'video'|Select-Object -First 1; $audio=$probe.streams|Where-Object codec_type -eq 'audio'|Select-Object -First 1
+    if(!($video -and $video.codec_name -eq 'h264' -and (!$video.pix_fmt -or $video.pix_fmt -eq 'yuv420p') -and (!$audio -or $audio.codec_name -eq 'aac'))){return $false}
+    $outputDuration=[double]$probe.format.duration
+    if($outputDuration -le 0){return $false}
+    if($SourcePath){
+      $sourceProbe=Get-Probe $SourcePath; $sourceDuration=[double]$sourceProbe.format.duration
+      if($sourceDuration -le 0){return $false}
+      $tolerance=[Math]::Max(2.0,$sourceDuration*0.02)
+      if([Math]::Abs($sourceDuration-$outputDuration) -gt $tolerance){return $false}
+    }
+    return $true
+  } catch { return $false }
+}
+function Get-Candidates { Get-ChildItem -LiteralPath $MediaRoot -Recurse -File -ErrorAction SilentlyContinue|Where-Object { if($VideoExtensions -notcontains $_.Extension.ToLowerInvariant()){return $false}; if($_.FullName -like "$MediaRoot\.constants-hub\*"){return $false}; if($_.Name -like '* - NVENC TEST.mp4' -or $_.Name -like '* - NVENC LOCAL TEST.mp4'){return $false}; if($_.Extension.ToLowerInvariant() -ne '.mp4'){ $sameNameMp4=Join-Path $_.DirectoryName (([IO.Path]::GetFileNameWithoutExtension($_.Name))+'.mp4'); if((Test-Path -LiteralPath $sameNameMp4) -and (Test-Output $sameNameMp4 $_.FullName)){return $false} }; return $true }|Sort-Object LastWriteTime }
 function Quote-ProcessArgument([string]$Value) { if($null -eq $Value){return '""'}; return '"'+($Value -replace '(\\*)"','$1$1\"' -replace '(\\+)$','$1$1')+'"' }
 function Invoke-FfmpegWithHeartbeat([string[]]$Arguments,[hashtable]$State) {
-  $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName='ffmpeg.exe'; $psi.Arguments=(($Arguments|ForEach-Object {Quote-ProcessArgument $_}) -join ' '); $psi.UseShellExecute=$false; $psi.CreateNoWindow=$false; $process=New-Object System.Diagnostics.Process; $process.StartInfo=$psi; if(!$process.Start()){throw 'Could not start ffmpeg.exe'}
-  try { while(!$process.WaitForExit(3000)){Save-State $State}; $process.WaitForExit(); $exitCode=[int]$process.ExitCode; if($exitCode -ne 0){throw "ffmpeg exited with code $exitCode"} } finally { if(!$process.HasExited){try{$process.Kill()}catch{}}; $process.Dispose() }
+  $progressFile=Join-Path $WorkRoot ("ffmpeg-progress-{0}-{1}.txt" -f $PID,[Guid]::NewGuid().ToString('N'))
+  $ffmpegArguments=@($Arguments[0..($Arguments.Count-2)])+@('-progress',$progressFile,'-nostats')+@($Arguments[$Arguments.Count-1])
+  $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName='ffmpeg.exe'; $psi.Arguments=(($ffmpegArguments|ForEach-Object {Quote-ProcessArgument $_}) -join ' '); $psi.UseShellExecute=$false; $psi.CreateNoWindow=$false; $process=New-Object System.Diagnostics.Process; $process.StartInfo=$psi; if(!$process.Start()){throw 'Could not start ffmpeg.exe'}
+  try {
+    while(!$process.WaitForExit(3000)){
+      try {
+        $progressLine=Get-Content -LiteralPath $progressFile -ErrorAction Stop|Where-Object {$_ -like 'out_time_us=*'}|Select-Object -Last 1
+        if($progressLine -and [double]$State.durationSeconds -gt 0){
+          $outSeconds=[double]($progressLine.Substring('out_time_us='.Length))/1000000
+          $State.progress=[Math]::Max(0,[Math]::Min(99,[Math]::Round(($outSeconds/[double]$State.durationSeconds)*100)))
+        }
+      } catch {}
+      Save-State $State
+    }
+    $process.WaitForExit(); $exitCode=[int]$process.ExitCode; if($exitCode -ne 0){throw "ffmpeg exited with code $exitCode"}
+  } finally { if(!$process.HasExited){try{$process.Kill()}catch{}}; $process.Dispose(); Remove-Item -LiteralPath $progressFile -Force -ErrorAction SilentlyContinue }
 }
 function Convert-One([IO.FileInfo]$File,[bool]$OverrideActive) {
-  $mode=Get-Mode $File.FullName; if($mode -eq 'skip'){return $false}; $relative=$File.FullName.Substring($MediaRoot.Length).TrimStart('\'); $relativeDir=Split-Path $relative -Parent; $baseName=[IO.Path]::GetFileNameWithoutExtension($File.Name); $tempDir=Join-Path $WorkRoot ([Guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Force $tempDir|Out-Null; $tempOutput=Join-Path $tempDir "$baseName.mp4"; $destDir=if($relativeDir){Join-Path $MediaRoot $relativeDir}else{$MediaRoot}; $dest=Join-Path $destDir "$baseName.mp4"; $archiveDir=if($relativeDir){Join-Path $MediaRoot (Join-Path '.constants-hub\originals' $relativeDir)}else{Join-Path $MediaRoot '.constants-hub\originals'}; New-Item -ItemType Directory -Force $archiveDir|Out-Null; if(Test-Path -LiteralPath $dest){Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue; return $false}
-  $jobId=[Guid]::NewGuid().ToString('N'); Update-History @{id=$jobId;source=$File.FullName;output=$dest;mode=$mode;status='converting';startedAt=(Get-Date).ToString('o')}; $active=@{status='converting';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}; Save-State $active; Write-Log "START [$mode] $($File.FullName)"
+  $mode=Get-Mode $File.FullName; if($mode -eq 'skip'){return $false}; $relative=$File.FullName.Substring($MediaRoot.Length).TrimStart('\'); $relativeDir=Split-Path $relative -Parent; $baseName=[IO.Path]::GetFileNameWithoutExtension($File.Name); $tempDir=Join-Path $WorkRoot ([Guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Force $tempDir|Out-Null; $tempOutput=Join-Path $tempDir "$baseName.mp4"; $destDir=if($relativeDir){Join-Path $MediaRoot $relativeDir}else{$MediaRoot}; $dest=Join-Path $destDir "$baseName.mp4"; $archiveDir=if($relativeDir){Join-Path $MediaRoot (Join-Path '.constants-hub\originals' $relativeDir)}else{Join-Path $MediaRoot '.constants-hub\originals'}; New-Item -ItemType Directory -Force $archiveDir|Out-Null
+  if(Test-Path -LiteralPath $dest){
+    if(Test-Output $dest $File.FullName){Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue; return $false}
+    $failedDir=if($relativeDir){Join-Path $MediaRoot (Join-Path '.constants-hub\failed-outputs' $relativeDir)}else{Join-Path $MediaRoot '.constants-hub\failed-outputs'}
+    New-Item -ItemType Directory -Force $failedDir|Out-Null
+    $failedDest=Join-Path $failedDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),[IO.Path]::GetFileName($dest))
+    Move-Item -LiteralPath $dest -Destination $failedDest
+    Write-Log "QUARANTINE incomplete or invalid output: $failedDest"
+  }
+  $sourceDuration=[double](Get-Probe $File.FullName).format.duration
+  $jobId=[Guid]::NewGuid().ToString('N'); Update-History @{id=$jobId;source=$File.FullName;output=$dest;mode=$mode;status='converting';progress=0;durationSeconds=$sourceDuration;startedAt=(Get-Date).ToString('o')}; $active=@{status='converting';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId;progress=0;durationSeconds=$sourceDuration}; Save-State $active; Write-Log "START [$mode] $($File.FullName)"
   try {
     if($mode -eq 'transcode'){$args=@('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} elseif($mode -eq 'audio'){$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} else {$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','copy','-movflags','+faststart',$tempOutput)}
-    Invoke-FfmpegWithHeartbeat $args $active; if(!(Test-Output $tempOutput)){throw "verification failed for $tempOutput"}; Wait-ForPlaybackIdle $active; Update-History @{id=$jobId;status='copying'}; Save-State @{status='copying';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}; Copy-Item -LiteralPath $tempOutput -Destination $dest -Force; if(!(Test-Output $dest)){Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue; throw "NAS copy verification failed for $dest"}; $archived=Join-Path $archiveDir $File.Name; if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}; Move-Item -LiteralPath $File.FullName -Destination $archived; Remove-Item -LiteralPath $tempDir -Recurse -Force; Update-History @{id=$jobId;status='completed';completedAt=(Get-Date).ToString('o')}; Save-State @{status='completed';source=$File.FullName;mode=$mode;output=$dest;archived=$archived;override=$OverrideActive;jobId=$jobId}; Write-Log "DONE $dest"; return $true
+    Invoke-FfmpegWithHeartbeat $args $active; if(!(Test-Output $tempOutput $File.FullName)){throw "verification failed: output is unreadable, incompatible, or does not match source duration"}; Wait-ForPlaybackIdle $active; Update-History @{id=$jobId;status='copying'}; Save-State @{status='copying';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId}; Copy-Item -LiteralPath $tempOutput -Destination $dest -Force; if(!(Test-Output $dest $File.FullName)){Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue; throw "NAS copy verification failed: copied output is incomplete or does not match source duration"}; $archived=Join-Path $archiveDir $File.Name; if(Test-Path -LiteralPath $archived){$archived=Join-Path $archiveDir ("{0}-{1}" -f (Get-Date -Format 'yyyyMMddHHmmss'),$File.Name)}; Move-Item -LiteralPath $File.FullName -Destination $archived; Remove-Item -LiteralPath $tempDir -Recurse -Force; Update-History @{id=$jobId;status='completed';completedAt=(Get-Date).ToString('o')}; Save-State @{status='completed';source=$File.FullName;mode=$mode;output=$dest;archived=$archived;override=$OverrideActive;jobId=$jobId}; Write-Log "DONE $dest"; return $true
   } catch { $message=$_.Exception.Message; Update-History @{id=$jobId;status='failed';error=$message}; Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue; throw }
 }
 function Invoke-Maintenance {
@@ -104,6 +152,12 @@ function Test-WeeklyMaintenanceDue {
 Write-Log "Worker $WorkerVersion starting. RunNow=$RunNow ForceWhenBusy=$ForceWhenBusy Once=$Once MediaRoot=$MediaRoot WorkRoot=$WorkRoot"
 $siteOverride=[bool]$RunNow; Save-State @{status='idle';source=$null;override=$siteOverride}
 while($true){
+  if (!(Test-Path -LiteralPath $MediaRoot)) {
+    Save-State @{status='waiting';reason='NAS media share unavailable; retrying';override=$siteOverride}
+    if($Once){break}
+    Start-Sleep -Seconds 10
+    continue
+  }
   if((Test-Path -LiteralPath $LocalStopFile) -or (Test-Path -LiteralPath $RemoteStopFile)){Remove-Item -LiteralPath $RemoteStopFile -Force -ErrorAction SilentlyContinue; Write-Log 'STOP command detected. Exiting.'; Save-State @{status='stopped';override=$false}; break}
   if(Test-Path -LiteralPath $RemoteEndOverrideFile){Remove-Item -LiteralPath $RemoteEndOverrideFile -Force -ErrorAction SilentlyContinue; $siteOverride=$false; Write-Log 'Daytime override ended; normal overnight rules restored.'; Save-State @{status='waiting';reason='daytime override ended';override=$false}}
   if(Test-Path -LiteralPath $RemoteRunFile){Remove-Item -LiteralPath $RemoteRunFile -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $RemotePauseFile -Force -ErrorAction SilentlyContinue; $siteOverride=$true; Write-Log 'Convert Now command detected. Daytime override enabled.'}

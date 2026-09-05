@@ -81,6 +81,8 @@ The container health cycle also scans for newly added incompatible media once pe
 
 The DS223 has limited CPU resources, so full-length conversions can take many hours. Keep the NAS powered on and monitor the persistent queue on the Media Compatibility page. Configure the native public login before exposing administrative mutation routes.
 
+The optional Windows NVENC worker lives in `tools/windows-transcode`. Run `install.ps1` from that folder as Administrator to copy the current worker into `D:\ConstantsHub-Worker` and register its persistent scheduled task. The worker keeps running when the NAS is temporarily unavailable and reconnects automatically. Every output must be readable, mobile-compatible, and match the source duration before the original is archived. A pre-existing invalid same-name MP4 is moved to `.constants-hub\failed-outputs` for recovery and the source is retried.
+
 Conversions use one FFmpeg video thread to leave capacity for simultaneous playback. The Media Compatibility page provides persistent Pause and Resume controls, per-job and overall progress bars, and safe cleanup for completed or failed history. Pausing suspends the active FFmpeg process without stopping Constant’s Hub or discarding the queue.
 
 Smart conversion copies compatible H.264/AAC streams directly into MP4, converts only audio when the video is already compatible, and uses full H.264 encoding only when required. By default conversions run from midnight until 7 a.m. and automatically suspend while a stream is active. Configure the window with `CONVERSION_SCHEDULE_ENABLED`, `CONVERSION_START_HOUR`, and `CONVERSION_END_HOUR`.

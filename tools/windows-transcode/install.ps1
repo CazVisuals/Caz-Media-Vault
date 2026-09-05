@@ -7,7 +7,18 @@ $ErrorActionPreference = 'Stop'
 
 New-Item -ItemType Directory -Force $InstallRoot,$WorkRoot | Out-Null
 $worker = Join-Path $InstallRoot 'worker.ps1'
-if (!(Test-Path -LiteralPath $worker)) { throw "worker.ps1 must already exist at $worker" }
+$sourceWorker = Join-Path $PSScriptRoot 'worker.ps1'
+$sourceMaintenance = Join-Path $PSScriptRoot 'maintenance.ps1'
+if (!(Test-Path -LiteralPath $sourceWorker)) { throw "worker.ps1 is missing beside install.ps1: $sourceWorker" }
+if (([IO.Path]::GetFullPath($sourceWorker)) -ne ([IO.Path]::GetFullPath($worker))) {
+  Copy-Item -LiteralPath $sourceWorker -Destination $worker -Force
+}
+if (Test-Path -LiteralPath $sourceMaintenance) {
+  $maintenance = Join-Path $InstallRoot 'maintenance.ps1'
+  if (([IO.Path]::GetFullPath($sourceMaintenance)) -ne ([IO.Path]::GetFullPath($maintenance))) {
+    Copy-Item -LiteralPath $sourceMaintenance -Destination $maintenance -Force
+  }
+}
 if (!(Get-Command ffmpeg -ErrorAction SilentlyContinue)) { throw 'FFmpeg is not available in PATH.' }
 if (!(Test-Path -LiteralPath $MediaRoot)) { throw "NAS media share is unavailable: $MediaRoot" }
 
@@ -38,8 +49,13 @@ Register-ScheduledTask `
   -Force | Out-Null
 
 Start-ScheduledTask -TaskName $taskName
+Start-Sleep -Seconds 3
+$task = Get-ScheduledTask -TaskName $taskName
+$taskInfo = Get-ScheduledTaskInfo -TaskName $taskName
 Write-Host "Installed and started: $taskName"
 Write-Host "Worker: $worker"
 Write-Host "Temp: $WorkRoot"
+Write-Host "Task state: $($task.State)"
+Write-Host "Last task result: $($taskInfo.LastTaskResult)"
 Write-Host 'The listener now starts at Windows startup/logon, retries after crashes, and stays alive so the website controls are one-click.'
 Write-Host 'Conversion still follows midnight-7AM idle rules unless the site enables a daytime override.'

@@ -33,7 +33,7 @@ function Write-JsonFile([string]$Path,[object]$Value) {
 }
 
 function Get-Probe([string]$Path) {
-  $json = & ffprobe -v error -show_entries format=format_name:stream=index,codec_type,codec_name,pix_fmt -of json -- "$Path"
+  $json = & ffprobe -v error -show_entries format=format_name,duration:stream=index,codec_type,codec_name,pix_fmt -of json -- "$Path"
   if($LASTEXITCODE -ne 0){ throw "ffprobe failed" }
   return $json | ConvertFrom-Json
 }
@@ -43,7 +43,8 @@ function Test-MobileReady([string]$Path) {
   $video = $probe.streams | Where-Object codec_type -eq 'video' | Select-Object -First 1
   $audio = $probe.streams | Where-Object codec_type -eq 'audio' | Select-Object -First 1
   $extension = [IO.Path]::GetExtension($Path).ToLowerInvariant()
-  return $extension -in @('.mp4','.m4v') -and $video -and $video.codec_name -eq 'h264' -and (!$video.pix_fmt -or $video.pix_fmt -eq 'yuv420p') -and (!$audio -or $audio.codec_name -eq 'aac')
+  $duration = [double]$probe.format.duration
+  return $duration -gt 0 -and $extension -in @('.mp4','.m4v') -and $video -and $video.codec_name -eq 'h264' -and (!$video.pix_fmt -or $video.pix_fmt -eq 'yuv420p') -and (!$audio -or $audio.codec_name -eq 'aac')
 }
 
 $startedAt = (Get-Date).ToString('o')

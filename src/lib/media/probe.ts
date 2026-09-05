@@ -2,6 +2,20 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const MAX_CONCURRENT_PROBES = 2;
+let activeProbes = 0;
+const probeWaiters: Array<() => void> = [];
+
+async function acquireProbeSlot() {
+  if (activeProbes < MAX_CONCURRENT_PROBES) { activeProbes += 1; return; }
+  await new Promise<void>((resolve) => probeWaiters.push(resolve));
+  activeProbes += 1;
+}
+
+function releaseProbeSlot() {
+  activeProbes = Math.max(0, activeProbes - 1);
+  probeWaiters.shift()?.();
+}
 
 type ProbeJson = {
   format?: { format_name?: string; duration?: string };
@@ -23,7 +37,13 @@ export type MediaProbe = {
 };
 
 export async function probeMedia(filePath: string): Promise<MediaProbe> {
-  const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_format", "-show_streams", "-of", "json", filePath], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
+  await acquireProbeSlot();
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_format", "-show_streams", "-of", "json", filePath], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 }));
+  } finally {
+    releaseProbeSlot();
+  }
   const result = JSON.parse(stdout) as ProbeJson;
   const video = result.streams?.find((stream) => stream.codec_type === "video");
   const audio = result.streams?.find((stream) => stream.codec_type === "audio");
