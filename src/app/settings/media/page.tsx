@@ -26,7 +26,6 @@ export default function MediaToolsPage() {
   const [pcOnline, setPcOnline] = useState(false);
   const [pcBusy, setPcBusy] = useState(false);
   const [pcMessage, setPcMessage] = useState("");
-  const [visibleQueueCount, setVisibleQueueCount] = useState(50);
   const [libraryRefreshing, setLibraryRefreshing] = useState(false);
   const libraryRefreshInFlight = useRef(false);
 
@@ -64,7 +63,7 @@ export default function MediaToolsPage() {
   }
 
   async function refreshPc(details = false) {
-    const response = await fetch(`/api/admin/pc-worker?details=${details ? "1" : "0"}`, { cache: "no-store" });
+    const response = await fetch(`/api/admin/pc-worker?details=${details ? "1" : "0"}&offset=0&limit=50`, { cache: "no-store" });
     if (!response.ok) return;
     const result = await response.json() as PcWorker;
     setPcWorker((current) => details || !current ? result : {
@@ -75,6 +74,27 @@ export default function MediaToolsPage() {
     });
     const updatedAt = result.status?.updatedAt ? new Date(result.status.updatedAt).getTime() : 0;
     setPcOnline(Boolean(updatedAt && Date.now() - updatedAt < 90000));
+  }
+
+  async function loadMoreQueue() {
+    const offset = pcWorker?.maintenance?.incompatibleFiles?.length || 0;
+    setPcBusy(true);
+    try {
+      const response = await fetch(`/api/admin/pc-worker?details=1&offset=${offset}&limit=50`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Could not load more queue entries.");
+      const result = await response.json() as PcWorker;
+      setPcWorker((current) => current ? {
+        ...current,
+        status: result.status || current.status,
+        history: [...(current.history || []), ...(result.history || [])].filter((job, index, all) => all.findIndex((item) => item.id === job.id) === index),
+        maintenance: current.maintenance ? {
+          ...current.maintenance,
+          ...result.maintenance,
+          incompatibleFiles: [...(current.maintenance.incompatibleFiles || []), ...(result.maintenance?.incompatibleFiles || [])],
+        } : result.maintenance,
+      } : result);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load more queue entries."); }
+    finally { setPcBusy(false); }
   }
 
   useEffect(() => {
@@ -122,10 +142,12 @@ export default function MediaToolsPage() {
   const rawPending = items.filter((item) => item.probe && !item.probe.mobileCompatible);
   const pending = rawPending.filter((item) => !completedHistory.some((job) => sourceMatches(item.movie.relativePath, job.source)));
   const reportedPending = (maintenance?.incompatibleFiles || []).filter((file) => !completedHistory.some((job) => sameSource(file.path, job.source)));
+  const maintenanceFinishedAt = maintenance?.completedAt ? Date.parse(maintenance.completedAt) : 0;
+  const completedSinceMaintenance = completedHistory.filter((job) => maintenanceFinishedAt && Date.parse(job.completedAt || job.updatedAt || "") > maintenanceFinishedAt);
   const inspectedTotal = items.filter((item) => item.probe).length;
   const usingFreshInspection = inspectedTotal > 0;
   const total = usingFreshInspection ? inspectedTotal : maintenance?.scanned ?? 0;
-  const remaining = usingFreshInspection ? pending.length : maintenance?.incompatibleFiles ? reportedPending.length : maintenance?.incompatible ?? 0;
+  const remaining = usingFreshInspection ? pending.length : Math.max(0, (maintenance?.incompatible ?? reportedPending.length) - completedSinceMaintenance.length);
   const ready = usingFreshInspection ? Math.max(0, total - pending.length) : Math.max(0, total - remaining - (maintenance?.probeErrors ?? 0));
   const readyPercent = total ? Math.round((ready / total) * 100) : 0;
   const currentSource = pc?.source || "";
@@ -164,9 +186,9 @@ export default function MediaToolsPage() {
 
     {!loading ? <section className="admin-panel"><div className="queue-heading"><div><p className="eyebrow">CAZ-PC QUEUE</p><h2>{remaining ? `${remaining} waiting for conversion` : total ? "All reported media is ready" : "Run a compatibility scan for file details"}</h2></div><div className="queue-actions"><button className="secondary-button" disabled={pcBusy || completedHistory.length === 0} onClick={() => void pcCommand("clear-completed")}>Clear completed</button><button className="secondary-button" disabled={pcBusy || failedHistory.length === 0} onClick={() => void pcCommand("clear-failed")}>Clear failed</button></div></div>
       {pending.map(({ movie, probe }) => { const isCurrent = Boolean(currentSource && sourceMatches(movie.relativePath, currentSource)); const isFailed = isCurrent && pc?.status === "failed"; const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? `Converting${typeof pc?.progress === "number" ? ` · ${pc.progress}%` : ""}` : "Queued"; const statusClass = isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued"; return <div className="queue-row" key={movie.id}><div><strong>{movie.relativePath}</strong><small>{isFailed ? (pc?.error || pc?.reason || modeLabel(probe?.conversionMode || undefined)) : modeLabel(probe?.conversionMode || undefined)}</small></div><span className={statusClass}>{label}</span><div className="job-progress"><span style={{ width: `${isCurrent && pc?.status === "converting" ? pc.progress || 0 : 0}%` }} /></div></div>; })}
-      {!usingFreshInspection ? reportedPending.slice(0, visibleQueueCount).map((file) => { const isCurrent = Boolean(currentSource && sameSource(file.path, currentSource)); const isFailed = isCurrent && pc?.status === "failed"; const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? `Converting${typeof pc?.progress === "number" ? ` · ${pc.progress}%` : ""}` : "Waiting"; return <div className="queue-row" key={file.path}><div><strong>{displaySource(file.path)}</strong><small>{isFailed ? pc?.error || pc?.reason || "Conversion failed" : isCurrent ? modeLabel(pc?.mode) : "Needs conversion"}</small></div><span className={isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued"}>{label}</span><div className="job-progress"><span style={{ width: `${isCurrent && pc?.status === "converting" ? pc.progress || 0 : 0}%` }} /></div></div>; }) : null}
-      {!usingFreshInspection && reportedPending.length > visibleQueueCount ? <button className="secondary-button" onClick={() => setVisibleQueueCount((count) => count + 50)}>Show 50 more ({reportedPending.length - visibleQueueCount} remaining)</button> : null}
-      {completedHistory.slice(0, visibleQueueCount).map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{modeLabel(job.mode)}</small></div><span className="queue-completed">Completed</span><div className="job-progress"><span style={{ width: "100%" }} /></div></div>)}
+      {!usingFreshInspection ? reportedPending.map((file) => { const isCurrent = Boolean(currentSource && sameSource(file.path, currentSource)); const isFailed = isCurrent && pc?.status === "failed"; const label = isFailed ? "Failed" : isCurrent && pc?.status === "copying" ? "Copying to NAS" : isCurrent ? `Converting${typeof pc?.progress === "number" ? ` · ${pc.progress}%` : ""}` : "Waiting"; return <div className="queue-row" key={file.path}><div><strong>{displaySource(file.path)}</strong><small>{isFailed ? pc?.error || pc?.reason || "Conversion failed" : isCurrent ? modeLabel(pc?.mode) : "Needs conversion"}</small></div><span className={isFailed ? "queue-failed" : isCurrent ? "queue-converting" : "queue-queued"}>{label}</span><div className="job-progress"><span style={{ width: `${isCurrent && pc?.status === "converting" ? pc.progress || 0 : 0}%` }} /></div></div>; }) : null}
+      {!usingFreshInspection && (maintenance?.incompatible ?? 0) > (maintenance?.incompatibleFiles?.length ?? 0) ? <button className="secondary-button" disabled={pcBusy} onClick={() => void loadMoreQueue()}>Show 50 more ({(maintenance?.incompatible ?? 0) - (maintenance?.incompatibleFiles?.length ?? 0)} remaining)</button> : null}
+      {completedHistory.map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{modeLabel(job.mode)}</small></div><span className="queue-completed">Completed</span><div className="job-progress"><span style={{ width: "100%" }} /></div></div>)}
       {failedHistory.filter((job) => !pending.some((item) => sourceMatches(item.movie.relativePath, job.source))).map((job) => <div className="queue-row" key={job.id}><div><strong>{displaySource(job.source)}</strong><small>{job.error || modeLabel(job.mode)}</small></div><span className="queue-failed">Failed</span><div className="job-progress"><span style={{ width: "0%" }} /></div></div>)}
       {!pending.length && !reportedPending.length && !completedHistory.length && !failedHistory.length ? <div className="state-card"><strong>Queue complete</strong><small>CAZ-PC has no incompatible files waiting in the last scan.</small></div> : null}</section> : null}
 
