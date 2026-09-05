@@ -1,4 +1,4 @@
-const CACHE = "constants-hub-shell-v4";
+const CACHE = "constants-hub-shell-v5";
 const DB_NAME = "constants-hub-offline";
 const DB_VERSION = 1;
 const CHUNK_SIZE = 2 * 1024 * 1024;
@@ -57,6 +57,8 @@ self.addEventListener("fetch", (event) => {
   const request = event.request; const url = new URL(request.url);
   if (request.method !== "GET") return;
   if (url.pathname.startsWith("/__offline/media/")) { event.respondWith(offlineMedia(request, decodeURIComponent(url.pathname.split("/").pop()))); return; }
-  if (url.pathname.startsWith("/api/")) return;
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/_next/") || url.pathname.startsWith("/settings") || url.pathname.startsWith("/organize") || url.pathname.startsWith("/login") || url.pathname.startsWith("/invite/")) return;
+  const cacheable = SHELL.includes(url.pathname) || url.pathname.startsWith("/icon-") || url.pathname === "/icon.svg";
+  if (!cacheable) return;
   event.respondWith(fetch(request).then((response) => { if (response.ok && request.destination !== "video") void caches.open(CACHE).then((cache) => cache.put(request, response.clone())); return response; }).catch(() => caches.match(request).then((cached) => cached || (request.mode === "navigate" ? caches.match("/tv/offline") : undefined) || new Response("Offline", { status: 503 }))));
 });
