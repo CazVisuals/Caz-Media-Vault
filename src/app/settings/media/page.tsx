@@ -11,10 +11,10 @@ type PcJob = { id: string; source: string; output?: string; mode?: string; statu
 type MaintenanceReport = { status?: string; startedAt?: string; completedAt?: string; scanned?: number; mobileReady?: number; incompatible?: number; probeErrors?: number; exactDuplicatesRemoved?: number; duplicatePolicy?: string; incompatibleFiles?: { path: string; size?: number }[]; };
 type PcWorker = { success: boolean; enabled?: boolean; status?: PcWorkerStatus | null; history?: PcJob[]; maintenance?: MaintenanceReport | null; error?: string };
 
-function normalized(value: string) { return value.replace(/\//g, "\\").toLowerCase(); }
-function sourceMatches(relativePath: string, source: string) { return normalized(source).endsWith(normalized(relativePath)); }
-function sameSource(left: string, right: string) { return normalized(left) === normalized(right) || normalized(left).endsWith(normalized(right)) || normalized(right).endsWith(normalized(left)); }
-function displaySource(source: string) { const marker = "\\video\\"; const lower = source.toLowerCase(); const index = lower.indexOf(marker); return index >= 0 ? source.slice(index + marker.length) : source.split("\\").pop() || source; }
+function normalized(value: unknown) { return typeof value === "string" ? value.replace(/\//g, "\\").toLowerCase() : ""; }
+function sourceMatches(relativePath: unknown, source: unknown) { const relative = normalized(relativePath); const full = normalized(source); return Boolean(relative && full && full.endsWith(relative)); }
+function sameSource(left: unknown, right: unknown) { const a = normalized(left); const b = normalized(right); return Boolean(a && b && (a === b || a.endsWith(b) || b.endsWith(a))); }
+function displaySource(source: unknown) { if (typeof source !== "string" || !source.trim()) return "Unknown legacy file"; const marker = "\\video\\"; const lower = source.toLowerCase(); const index = lower.indexOf(marker); return index >= 0 ? source.slice(index + marker.length) : source.split("\\").pop() || source; }
 function modeLabel(mode?: string) { return mode === "remux" ? "Quick remux" : mode === "audio" || mode === "audio-convert" ? "Audio conversion" : mode === "transcode" ? "RTX NVENC" : "Conversion"; }
 
 export default function MediaToolsPage() {
@@ -134,14 +134,14 @@ export default function MediaToolsPage() {
 
   const pc = pcWorker?.status;
   const maintenance = pcWorker?.maintenance;
-  const history = pcWorker?.history || [];
+  const history = (pcWorker?.history || []).filter((job) => typeof job?.source === "string" && job.source.trim());
   const completedHistory = history.filter((job) => job.status === "completed");
   const historyFailures = history.filter((job) => job.status === "failed" && !completedHistory.some((completed) => sameSource(completed.source, job.source)));
   const liveFailedJob: PcJob | null = pc?.status === "failed" && pc.source && !completedHistory.some((completed) => sameSource(completed.source, pc.source!)) ? { id: pc.jobId || `live-failed-${pc.source}`, source: pc.source, output: pc.output, mode: pc.mode, status: "failed", error: pc.error || pc.reason || "CAZ-PC reported a conversion failure.", updatedAt: pc.updatedAt } : null;
   const failedHistory = liveFailedJob && !historyFailures.some((job) => job.id === liveFailedJob.id || sameSource(job.source, liveFailedJob.source)) ? [liveFailedJob, ...historyFailures] : historyFailures;
   const rawPending = items.filter((item) => item.probe && !item.probe.mobileCompatible);
   const pending = rawPending.filter((item) => !completedHistory.some((job) => sourceMatches(item.movie.relativePath, job.source)));
-  const reportedPending = (maintenance?.incompatibleFiles || []).filter((file) => !completedHistory.some((job) => sameSource(file.path, job.source)));
+  const reportedPending = (maintenance?.incompatibleFiles || []).filter((file) => typeof file?.path === "string" && file.path.trim() && !completedHistory.some((job) => sameSource(file.path, job.source)));
   const maintenanceFinishedAt = maintenance?.completedAt ? Date.parse(maintenance.completedAt) : 0;
   const completedSinceMaintenance = completedHistory.filter((job) => maintenanceFinishedAt && Date.parse(job.completedAt || job.updatedAt || "") > maintenanceFinishedAt);
   const inspectedTotal = items.filter((item) => item.probe).length;
