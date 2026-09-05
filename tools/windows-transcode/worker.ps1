@@ -11,7 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$WorkerVersion = "2026.09.05.2"
+$WorkerVersion = "2026.09.05.3"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $StateFile = Join-Path $WorkRoot 'worker-state.json'
 $LogFile = Join-Path $WorkRoot 'worker.log'
@@ -33,6 +33,7 @@ New-Item -ItemType Directory -Force $WorkRoot | Out-Null
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:HeartbeatSequence = 0
 $script:LastRemoteWarning = [datetime]::MinValue
+$script:FailedThisRun = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 
 function Write-Log([string]$Message) { $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $Message"; Add-Content -Path $LogFile -Value $line; Write-Host $line }
 function Write-JsonFile([string]$Path,[string]$Json) {
@@ -54,9 +55,15 @@ function Save-State([hashtable]$State) {
     }
   }
 }
-function Read-History { try { if(!(Test-Path -LiteralPath $HistoryFile)){return @()}; $raw=Get-Content -LiteralPath $HistoryFile -Raw; if([string]::IsNullOrWhiteSpace($raw)){return @()}; return @($raw|ConvertFrom-Json) } catch { return @() } }
+function Expand-HistoryValue([object]$Value) {
+  if($null -eq $Value){return}
+  if($Value -is [System.Array]){foreach($item in $Value){Expand-HistoryValue $item}; return}
+  if($Value.PSObject.Properties['id'] -and $Value.PSObject.Properties['source'] -and $Value.PSObject.Properties['status']){Write-Output $Value}
+  $nested=$Value.PSObject.Properties['value']; if($nested){Expand-HistoryValue $nested.Value}
+}
+function Read-History { try { if(!(Test-Path -LiteralPath $HistoryFile)){return @()}; $raw=Get-Content -LiteralPath $HistoryFile -Raw; if([string]::IsNullOrWhiteSpace($raw)){return @()}; $parsed=$raw|ConvertFrom-Json; return @(Expand-HistoryValue $parsed) } catch { return @() } }
 function Update-History([hashtable]$Job) {
-  try { $history=@(Read-History); $existing=$history|Where-Object {$_.id -eq $Job.id}|Select-Object -First 1; if($existing){ foreach($key in $Job.Keys){$existing|Add-Member -NotePropertyName $key -NotePropertyValue $Job[$key] -Force}; $existing|Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force } else { $record=[pscustomobject]$Job; $record|Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force; $history=@($record)+$history }; Write-JsonFile $HistoryFile ((@($history|Select-Object -First 250)|ConvertTo-Json -Depth 6)) } catch { Write-Log "WARN could not update history: $($_.Exception.Message)" }
+  try { $history=@(Read-History); $existing=$history|Where-Object {$_.id -eq $Job.id}|Select-Object -First 1; if($existing){ foreach($key in $Job.Keys){$existing|Add-Member -NotePropertyName $key -NotePropertyValue $Job[$key] -Force}; $existing|Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force } else { $record=[pscustomobject]$Job; $record|Add-Member -NotePropertyName updatedAt -NotePropertyValue ((Get-Date).ToString('o')) -Force; $history=@($record)+$history }; $trimmed=@($history|Select-Object -First 250); Write-JsonFile $HistoryFile (ConvertTo-Json -InputObject $trimmed -Depth 6) } catch { Write-Log "WARN could not update history: $($_.Exception.Message)" }
 }
 function Get-IdleSeconds {
   Add-Type @"
@@ -103,7 +110,7 @@ function Test-Output([string]$Path,[string]$SourcePath=$null) {
     return $true
   } catch { return $false }
 }
-function Get-Candidates { Get-ChildItem -LiteralPath $MediaRoot -Recurse -File -ErrorAction SilentlyContinue|Where-Object { if($VideoExtensions -notcontains $_.Extension.ToLowerInvariant()){return $false}; if($_.FullName -like "$MediaRoot\.constants-hub\*"){return $false}; if($_.Name -like '* - NVENC TEST.mp4' -or $_.Name -like '* - NVENC LOCAL TEST.mp4'){return $false}; if($_.Extension.ToLowerInvariant() -ne '.mp4'){ $sameNameMp4=Join-Path $_.DirectoryName (([IO.Path]::GetFileNameWithoutExtension($_.Name))+'.mp4'); if((Test-Path -LiteralPath $sameNameMp4) -and (Test-Output $sameNameMp4 $_.FullName)){return $false} }; return $true }|Sort-Object LastWriteTime }
+function Get-Candidates { Get-ChildItem -LiteralPath $MediaRoot -Recurse -File -ErrorAction SilentlyContinue|Where-Object { if($VideoExtensions -notcontains $_.Extension.ToLowerInvariant()){return $false}; if($_.FullName -like "$MediaRoot\.constants-hub\*"){return $false}; if($script:FailedThisRun.Contains($_.FullName)){return $false}; if($_.Name -like '* - NVENC TEST.mp4' -or $_.Name -like '* - NVENC LOCAL TEST.mp4'){return $false}; if($_.Extension.ToLowerInvariant() -ne '.mp4'){ $sameNameMp4=Join-Path $_.DirectoryName (([IO.Path]::GetFileNameWithoutExtension($_.Name))+'.mp4'); if((Test-Path -LiteralPath $sameNameMp4) -and (Test-Output $sameNameMp4 $_.FullName)){return $false} }; return $true }|Sort-Object LastWriteTime }
 function Quote-ProcessArgument([string]$Value) { if($null -eq $Value){return '""'}; return '"'+($Value -replace '(\\*)"','$1$1\"' -replace '(\\+)$','$1$1')+'"' }
 function Invoke-FfmpegWithHeartbeat([string[]]$Arguments,[hashtable]$State) {
   $progressFile=Join-Path $WorkRoot ("ffmpeg-progress-{0}-{1}.txt" -f $PID,[Guid]::NewGuid().ToString('N'))
@@ -193,7 +200,7 @@ while($true){
   if(Test-Path -LiteralPath $RemoteMaintenanceFile){Remove-Item -LiteralPath $RemoteMaintenanceFile -Force -ErrorAction SilentlyContinue; $siteOverride=$false; Invoke-Maintenance; continue}
   if(Test-GpuBusy){$gpu=Get-GpuUtilization; Save-State @{status='waiting';reason="Gaming protection: sustained GPU load ($gpu%)";override=$siteOverride}; if($Once){break}; Start-Sleep -Seconds 10; continue}
   if(!$siteOverride){ if(!(In-Schedule)){Save-State @{status='waiting';reason='outside schedule';override=$false}; if($Once){break}; Start-Sleep -Seconds 5; continue}; if((Get-IdleSeconds) -lt ($IdleMinutes*60)){Save-State @{status='waiting';reason='PC active';override=$false}; if($Once){break}; Start-Sleep -Seconds 10; continue} }
-  $converted=$false; foreach($file in Get-Candidates){ try { if(Convert-One $file $siteOverride){$converted=$true;break} } catch { Write-Log "ERROR $($file.FullName): $($_.Exception.Message)"; Save-State @{status='failed';source=$file.FullName;error=$_.Exception.Message;override=$siteOverride}; Start-Sleep -Seconds 10 } }
+  $converted=$false; foreach($file in Get-Candidates){ try { if(Convert-One $file $siteOverride){$converted=$true;break} } catch { [void]$script:FailedThisRun.Add($file.FullName); Write-Log "ERROR $($file.FullName): $($_.Exception.Message)"; Save-State @{status='failed';source=$file.FullName;error=$_.Exception.Message;override=$siteOverride}; Start-Sleep -Seconds 10 } }
   if($Once){break}
   if(!$converted){ if(!$siteOverride -and (Test-WeeklyMaintenanceDue)){Invoke-Maintenance; (Get-Date).ToString('yyyy-MM-dd')|Set-Content -LiteralPath $MaintenanceMarker -Encoding ASCII}; Save-State @{status='idle';reason='no incompatible files found';override=$siteOverride}; Start-Sleep -Seconds 10 }
 }
