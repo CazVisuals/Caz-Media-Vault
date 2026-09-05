@@ -29,6 +29,7 @@ export default function MediaToolsPage() {
   const [pcMessage, setPcMessage] = useState("");
   const [libraryRefreshing, setLibraryRefreshing] = useState(false);
   const [libraryScanCompletedAt, setLibraryScanCompletedAt] = useState<number | null>(null);
+  const [dashboardNow, setDashboardNow] = useState(0);
   const libraryRefreshInFlight = useRef(false);
 
   async function refreshLibrary() {
@@ -70,6 +71,7 @@ export default function MediaToolsPage() {
     const response = await fetch(`/api/admin/pc-worker?details=${details ? "1" : "0"}&offset=0&limit=50`, { cache: "no-store" });
     if (!response.ok) return;
     const result = await response.json() as PcWorker;
+    setDashboardNow(Date.now());
     setPcWorker((current) => details || !current ? result : {
       ...current,
       ...result,
@@ -139,7 +141,9 @@ export default function MediaToolsPage() {
   const pc = pcWorker?.status;
   const maintenance = pcWorker?.maintenance;
   const maintenanceProgress = pcWorker?.maintenanceProgress;
-  const maintenanceRunning = maintenanceProgress?.status === "running";
+  const maintenanceProgressTime = maintenanceProgress?.updatedAt ? Date.parse(maintenanceProgress.updatedAt) : 0;
+  const maintenanceRunning = maintenanceProgress?.status === "running" && Boolean(maintenanceProgressTime && dashboardNow - maintenanceProgressTime < 90000);
+  const maintenanceStale = maintenanceProgress?.status === "running" && !maintenanceRunning;
   const history = (pcWorker?.history || []).filter((job) => typeof job?.source === "string" && job.source.trim());
   const completedHistory = history.filter((job) => job.status === "completed");
   const historyFailures = history.filter((job) => job.status === "failed" && !completedHistory.some((completed) => sameSource(completed.source, job.source)));
@@ -187,7 +191,7 @@ export default function MediaToolsPage() {
     <section className="admin-panel">
       <div className="queue-heading"><div><p className="eyebrow">WEEKLY MAINTENANCE</p><h2>Compatibility + duplicate cleanup</h2></div><button className="secondary-button" disabled={pcBusy || !pcOnline || pc?.status === "converting" || pc?.status === "copying"} onClick={() => void pcCommand("run-maintenance")}>Run maintenance now</button></div>
       <p>CAZ-PC automatically runs this Sunday around 4 AM when the overnight queue is idle. Exact duplicates are only acted on after matching file size and SHA-256 hash.</p>
-      {maintenanceRunning ? <div className="maintenance-live"><p><strong>{maintenanceProgress.phase || "Maintenance running"}</strong> · {maintenanceProgress.progress ?? 0}%{maintenanceProgress.total ? ` · ${maintenanceProgress.scanned ?? 0} of ${maintenanceProgress.total} files checked` : ""}</p><div className="job-progress"><span style={{ width: `${maintenanceProgress.progress ?? 0}%` }} /></div>{maintenanceProgress.currentFile ? <small>Current file: {displaySource(maintenanceProgress.currentFile)}</small> : null}{maintenanceProgress.updatedAt ? <small> · Updated {new Date(maintenanceProgress.updatedAt).toLocaleTimeString()}</small> : null}</div> : maintenanceProgress?.status === "completed" ? <p className="artwork-ready"><strong>Maintenance complete</strong> · 100%</p> : null}
+      {maintenanceRunning ? <div className="maintenance-live"><p><strong>{maintenanceProgress.phase || "Maintenance running"}</strong> · {maintenanceProgress.progress ?? 0}%{maintenanceProgress.total ? ` · ${maintenanceProgress.scanned ?? 0} of ${maintenanceProgress.total} files checked` : ""}</p><div className="job-progress"><span style={{ width: `${maintenanceProgress.progress ?? 0}%` }} /></div>{maintenanceProgress.currentFile ? <small>Current file: {displaySource(maintenanceProgress.currentFile)}</small> : null}{maintenanceProgress.updatedAt ? <small> · Updated {new Date(maintenanceProgress.updatedAt).toLocaleTimeString()}</small> : null}</div> : maintenanceStale ? <p className="state-card error"><strong>Previous maintenance run was interrupted</strong><small>Progress stopped updating at {maintenanceProgress?.updatedAt ? new Date(maintenanceProgress.updatedAt).toLocaleTimeString() : "an unknown time"}. The last completed report is shown below.</small></p> : maintenanceProgress?.status === "completed" ? <p className="artwork-ready"><strong>Maintenance complete</strong> · 100%</p> : null}
       {maintenance ? <><p><strong>{maintenance.scanned ?? 0}</strong> scanned · <strong>{maintenance.mobileReady ?? 0}</strong> mobile ready · <strong>{maintenance.incompatible ?? 0}</strong> incompatible · <strong>{maintenance.exactDuplicatesRemoved ?? 0}</strong> exact duplicates removed from the active library · <strong>{maintenance.probeErrors ?? 0}</strong> probe errors.</p>{maintenance.completedAt ? <small>Last maintenance: {new Date(maintenance.completedAt).toLocaleString()}</small> : null}<p><small>{maintenance.duplicatePolicy}</small></p></> : <p>No weekly maintenance report yet.</p>}
     </section>
 
