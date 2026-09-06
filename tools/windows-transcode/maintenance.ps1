@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$MaintenanceVersion = "2026.09.05.2"
+$MaintenanceVersion = "2026.09.06.1"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $ControlRoot = Join-Path $MediaRoot '.constants-hub\pc-worker'
 $ReportFile = Join-Path $ControlRoot 'maintenance.json'
@@ -84,7 +84,13 @@ $scannedCount = 0
 $lastProgressWrite = [DateTime]::MinValue
 foreach($file in $files){
   try {
-    if(Test-MobileReady $file.FullName){ $ready++ }
+    $extension = $file.Extension.ToLowerInvariant()
+    $supersededByReadyMp4 = $false
+    if($extension -ne '.mp4'){
+      $sameNameMp4 = Join-Path $file.DirectoryName (([IO.Path]::GetFileNameWithoutExtension($file.Name))+'.mp4')
+      if(Test-Path -LiteralPath $sameNameMp4){$supersededByReadyMp4 = Test-MobileReady $sameNameMp4}
+    }
+    if($supersededByReadyMp4 -or (Test-MobileReady $file.FullName)){ $ready++ }
     else { $incompatible.Add([pscustomobject]@{ path=$file.FullName; size=$file.Length }) }
   } catch {
     $probeErrors.Add([pscustomobject]@{ path=$file.FullName; error=$_.Exception.Message })

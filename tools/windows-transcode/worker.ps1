@@ -11,7 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$WorkerVersion = "2026.09.05.3"
+$WorkerVersion = "2026.09.06.1"
 $VideoExtensions = @('.mp4','.mkv','.mov','.avi','.m4v','.webm')
 $StateFile = Join-Path $WorkRoot 'worker-state.json'
 $LogFile = Join-Path $WorkRoot 'worker.log'
@@ -144,7 +144,7 @@ function Convert-One([IO.FileInfo]$File,[bool]$OverrideActive) {
   $sourceDuration=[double](Get-Probe $File.FullName).format.duration
   $jobId=[Guid]::NewGuid().ToString('N'); Update-History @{id=$jobId;source=$File.FullName;output=$dest;mode=$mode;status='converting';progress=0;durationSeconds=$sourceDuration;startedAt=(Get-Date).ToString('o')}; $active=@{status='converting';source=$File.FullName;mode=$mode;temp=$tempOutput;output=$dest;override=$OverrideActive;jobId=$jobId;progress=0;durationSeconds=$sourceDuration}; Save-State $active; Write-Log "START [$mode] $($File.FullName)"
   try {
-    if($mode -eq 'transcode'){$args=@('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} elseif($mode -eq 'audio'){$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} else {$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-sn','-c:v','copy','-c:a','copy','-movflags','+faststart',$tempOutput)}
+    if($mode -eq 'transcode'){$args=@('-hide_banner','-y','-hwaccel','cuda','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-map_metadata','-1','-map_chapters','-1','-sn','-c:v','h264_nvenc','-preset','p4','-cq','21','-b:v','0','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} elseif($mode -eq 'audio'){$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-map_metadata','-1','-map_chapters','-1','-sn','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',$tempOutput)} else {$args=@('-hide_banner','-y','-i',$File.FullName,'-map','0:v:0','-map','0:a:0?','-map_metadata','-1','-map_chapters','-1','-sn','-c:v','copy','-c:a','copy','-movflags','+faststart',$tempOutput)}
     Invoke-FfmpegWithHeartbeat $args $active
     if(!(Test-Output $tempOutput $File.FullName)){throw "verification failed: output is unreadable, incompatible, or does not match source duration"}
     Wait-ForPlaybackIdle $active
