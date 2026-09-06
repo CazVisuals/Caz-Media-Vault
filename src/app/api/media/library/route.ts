@@ -6,6 +6,7 @@ import type { Movie } from "@/lib/media/types";
 import { ensureAppDataRoot } from "@/lib/app-data/path";
 import { NextRequest } from "next/server";
 import { currentSession } from "@/lib/auth/request";
+import { applyKidsOverrides } from "@/lib/media/kids-overrides";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,8 +52,9 @@ function refreshSnapshot(force = false) {
   return refreshInFlight;
 }
 
-function responseFor(snapshot: Snapshot, kids: boolean, stale: boolean, warning?: string) {
-  const movies = kids ? snapshot.movies.filter((movie) => movie.isKids) : snapshot.movies;
+async function responseFor(snapshot: Snapshot, kids: boolean, stale: boolean, warning?: string) {
+  const currentMovies = await applyKidsOverrides(snapshot.movies);
+  const movies = kids ? currentMovies.filter((movie) => movie.isKids) : currentMovies;
   return Response.json({
     success: true,
     scannedAt: snapshot.scannedAt,

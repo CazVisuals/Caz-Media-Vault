@@ -1,5 +1,6 @@
 import type { Movie } from "@/lib/media/types";
 import { isKidsMovie } from "@/lib/media/kids";
+import { applyKidsOverrides } from "@/lib/media/kids-overrides";
 
 type SearchMovie = {
   id: number;
@@ -125,5 +126,5 @@ export async function enrichMovies(movies: Movie[]) {
     }
   });
   await Promise.all(workers);
-  return result;
+  return applyKidsOverrides(result);
 }

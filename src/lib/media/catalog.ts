@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Movie } from "./types";
 import { isKidsMovie } from "./kids";
 import { parseEpisodeName } from "./episodes";
+import { applyKidsOverrides } from "./kids-overrides";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm"]);
 const ARTWORK_NAMES = ["poster.jpg", "poster.jpeg", "poster.png", "folder.jpg", "folder.jpeg", "folder.png"];
@@ -141,7 +142,8 @@ async function scanLibrary(): Promise<Movie[]> {
   const files: string[] = [];
   await walk(root, root, files);
   const results = await Promise.all(files.map((filePath) => buildMovie(root, filePath)));
-  return results.filter((movie): movie is Movie => Boolean(movie)).sort((a, b) => a.title.localeCompare(b.title));
+  const movies = results.filter((movie): movie is Movie => Boolean(movie)).sort((a, b) => a.title.localeCompare(b.title));
+  return applyKidsOverrides(movies);
 }
 
 export async function buildLibrary(options: { force?: boolean } = {}): Promise<Movie[]> {
