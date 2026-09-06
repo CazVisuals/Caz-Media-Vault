@@ -30,6 +30,16 @@ function movieId(relativePath: string) {
   return createHash("sha256").update(relativePath).digest("hex").slice(0, 24);
 }
 
+function logicalMediaPath(relativePath: string) {
+  const parsed = path.parse(relativePath);
+  return path.join(parsed.dir, parsed.name).toLowerCase();
+}
+
+function matchesPreviousExtensionId(movie: Movie, id: string) {
+  const parsed = path.parse(movie.relativePath);
+  return [...VIDEO_EXTENSIONS].some((extension) => movieId(path.join(parsed.dir, `${parsed.name}${extension}`)) === id);
+}
+
 function parseName(fileName: string) {
   const stem = path.basename(fileName, path.extname(fileName));
   const match = stem.match(/\((19|20)\d{2}\)/);
@@ -156,8 +166,11 @@ export async function buildLibrary(options: { force?: boolean } = {}): Promise<M
 export async function resolveMovie(id: string) {
   if (!/^[a-f0-9]{24}$/.test(id)) return null;
   let movie = (await buildLibrary()).find((item) => item.id === id);
-  // A conversion changes the extension (and therefore ID). Only rescan on an actual cache miss.
-  if (!movie) movie = (await buildLibrary({ force: true })).find((item) => item.id === id);
+  const previousLogicalPath = movie ? logicalMediaPath(movie.relativePath) : null;
+  if (!movie) {
+    const fresh = await buildLibrary({ force: true });
+    movie = fresh.find((item) => item.id === id || matchesPreviousExtensionId(item, id));
+  }
   if (!movie) return null;
   const absolutePath = path.resolve(getMediaRoot(), movie.relativePath);
   const relative = path.relative(getMediaRoot(), absolutePath);
@@ -169,7 +182,17 @@ export async function resolveMovie(id: string) {
     if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) return null;
     return { movie, absolutePath: realPath };
   } catch {
-    return null;
+    const fresh = await buildLibrary({ force: true });
+    const replacement = fresh.find((item) => item.id === id || (previousLogicalPath && logicalMediaPath(item.relativePath) === previousLogicalPath) || matchesPreviousExtensionId(item, id));
+    if (!replacement) return null;
+    const replacementPath = path.resolve(getMediaRoot(), replacement.relativePath);
+    try {
+      const realRoot = await fs.realpath(/* turbopackIgnore: true */ getMediaRoot());
+      const realPath = await fs.realpath(/* turbopackIgnore: true */ replacementPath);
+      const realRelative = path.relative(realRoot, realPath);
+      if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) return null;
+      return { movie: replacement, absolutePath: realPath };
+    } catch { return null; }
   }
 }
 

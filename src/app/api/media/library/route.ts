@@ -41,9 +41,9 @@ async function writeSnapshot(snapshot: Snapshot) {
   await fs.rename(temp, file);
 }
 
-function refreshSnapshot() {
+function refreshSnapshot(force = false) {
   refreshInFlight ??= (async () => {
-    const movies = await enrichMovies(await buildLibrary());
+    const movies = await enrichMovies(await buildLibrary({ force }));
     const snapshot = { scannedAt: new Date().toISOString(), movies } satisfies Snapshot;
     await writeSnapshot(snapshot);
     return snapshot;
@@ -71,12 +71,12 @@ export async function GET(request: NextRequest) {
 
   if (!forceRefresh && existing) {
     const age = Date.now() - Date.parse(existing.scannedAt);
-    if (!Number.isFinite(age) || age >= BACKGROUND_REFRESH_MS) void refreshSnapshot().catch(() => undefined);
+    if (!Number.isFinite(age) || age >= BACKGROUND_REFRESH_MS) void refreshSnapshot(true).catch(() => undefined);
     return responseFor(existing, kids, age >= BACKGROUND_REFRESH_MS);
   }
 
   try {
-    const fresh = await refreshSnapshot();
+    const fresh = await refreshSnapshot(forceRefresh);
     return responseFor(fresh, kids, false);
   } catch (error) {
     const fallback = existing || await readSnapshot();
