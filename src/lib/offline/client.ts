@@ -6,7 +6,7 @@ const CHUNK_SIZE = 512 * 1024;
 const OPFS_DIR = "offline-media";
 
 type OfflineBackend = "opfs" | "idb";
-type StorageManagerWithOpfs = StorageManager & { getDirectory?: () => Promise<FileSystemDirectoryHandle> };
+type StorageManagerWithOpfs = { getDirectory?: () => Promise<FileSystemDirectoryHandle> };
 
 export type OfflineStatus = "downloading" | "paused" | "ready" | "failed";
 export type OfflineDownload = Pick<Movie, "id" | "title" | "year" | "fileName" | "mediaType" | "seriesTitle" | "seasonNumber" | "episodeNumber"> & {
@@ -48,7 +48,7 @@ export function openOfflineDatabase() {
 }
 
 function storageManager() {
-  return navigator.storage as StorageManagerWithOpfs;
+  return navigator.storage as unknown as StorageManagerWithOpfs;
 }
 
 function opfsFileName(id: string) {
