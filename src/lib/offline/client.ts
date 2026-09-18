@@ -60,6 +60,30 @@ function openOfflineDatabaseOnce() {
   });
 }
 
+async function resetOfflineDatabaseConnection() {
+  const current = databasePromise;
+  databasePromise = null;
+  if (!current) return;
+  try {
+    const database = await current;
+    database.close();
+  } catch {}
+}
+
+async function withDatabaseRetry<T>(operation: (database: IDBDatabase) => Promise<T>) {
+  let lastError: unknown;
+  for (const wait of [0, 120, 350]) {
+    if (wait) await delay(wait);
+    try {
+      return await operation(await openOfflineDatabase());
+    } catch (error) {
+      lastError = error;
+      await resetOfflineDatabaseConnection();
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Offline storage operation failed.");
+}
+
 export async function openOfflineDatabase() {
   if (databasePromise) return databasePromise;
 
@@ -124,29 +148,34 @@ async function removeOpfsFile(id: string) {
 }
 
 async function putDownload(download: OfflineDownload) {
-  const database = await openOfflineDatabase();
-  const transaction = database.transaction("downloads", "readwrite");
-  transaction.objectStore("downloads").put(download);
-  await new Promise<void>((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+  await withDatabaseRetry(async (database) => {
+    const transaction = database.transaction("downloads", "readwrite");
+    transaction.objectStore("downloads").put(download);
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("Could not save offline download metadata."));
+      transaction.onabort = () => reject(transaction.error || new Error("Offline download metadata transaction was aborted."));
+    });
   });
 }
 
 async function putChunk(mediaId: string, index: number, bytes: ArrayBuffer) {
-  const database = await openOfflineDatabase();
-  const transaction = database.transaction("chunks", "readwrite");
-  transaction.objectStore("chunks").put({ key: `${mediaId}:${index}`, mediaId, index, bytes });
-  await new Promise<void>((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+  await withDatabaseRetry(async (database) => {
+    const transaction = database.transaction("chunks", "readwrite");
+    transaction.objectStore("chunks").put({ key: `${mediaId}:${index}`, mediaId, index, bytes });
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("Could not save offline video data."));
+      transaction.onabort = () => reject(transaction.error || new Error("Offline video storage transaction was aborted."));
+    });
   });
 }
 
 async function getChunk(mediaId: string, index: number) {
-  const database = await openOfflineDatabase();
-  const result = await requestResult(database.transaction("chunks").objectStore("chunks").get(`${mediaId}:${index}`)) as { bytes?: ArrayBuffer } | undefined;
-  return result?.bytes || null;
+  return withDatabaseRetry(async (database) => {
+    const result = await requestResult(database.transaction("chunks").objectStore("chunks").get(`${mediaId}:${index}`)) as { bytes?: ArrayBuffer } | undefined;
+    return result?.bytes || null;
+  });
 }
 
 async function clearIdbChunks(id: string) {
@@ -190,15 +219,17 @@ export async function verifyOfflineDownload(download: OfflineDownload) {
 }
 
 export async function getOfflineDownload(id: string) {
-  const database = await openOfflineDatabase();
-  const result = await requestResult(database.transaction("downloads").objectStore("downloads").get(id)) as OfflineDownload | undefined;
-  return result || null;
+  return withDatabaseRetry(async (database) => {
+    const result = await requestResult(database.transaction("downloads").objectStore("downloads").get(id)) as OfflineDownload | undefined;
+    return result || null;
+  });
 }
 
 export async function listOfflineDownloads() {
-  const database = await openOfflineDatabase();
-  const result = await requestResult(database.transaction("downloads").objectStore("downloads").getAll()) as OfflineDownload[];
-  return result.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  return withDatabaseRetry(async (database) => {
+    const result = await requestResult(database.transaction("downloads").objectStore("downloads").getAll()) as OfflineDownload[];
+    return result.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  });
 }
 
 export async function removeOfflineDownload(id: string) {
