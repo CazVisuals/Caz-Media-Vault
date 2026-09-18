@@ -29,8 +29,21 @@ function isAdminRoute(pathname: string) {
 }
 
 export async function proxy(request: NextRequest) {
+  const hostname = requestHostname(request);
   const cameThroughCloudflare = Boolean(request.headers.get("cf-ray") || request.headers.get("cf-connecting-ip"));
-  const directPrivateRequest = !cameThroughCloudflare && isPrivateHostname(requestHostname(request));
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  const cfVisitor = request.headers.get("cf-visitor");
+  const cloudflareHttps = cfVisitor?.includes('"scheme":"https"') || forwardedProto === "https";
+  const publicMediaHost = hostname === "media.themovecentral.com";
+
+  if (publicMediaHost && !cloudflareHttps) {
+    const secureUrl = request.nextUrl.clone();
+    secureUrl.protocol = "https:";
+    secureUrl.host = "media.themovecentral.com";
+    return NextResponse.redirect(secureUrl, 308);
+  }
+
+  const directPrivateRequest = !cameThroughCloudflare && isPrivateHostname(hostname);
   const { pathname, search } = request.nextUrl;
   if (isPublicAuthRoute(pathname)) return NextResponse.next();
   if (directPrivateRequest && !isAdminRoute(pathname)) return NextResponse.next();
