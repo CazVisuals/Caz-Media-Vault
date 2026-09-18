@@ -3,9 +3,11 @@ import type { Movie } from "@/lib/media/types";
 const DB_NAME = "constants-hub-offline";
 const DB_VERSION = 1;
 const CHUNK_SIZE = 512 * 1024;
+const CACHE_CHUNK_SIZE = 2 * 1024 * 1024;
 const OPFS_DIR = "offline-media";
+const DOWNLOAD_CACHE = "constants-hub-downloads-v1";
 
-type OfflineBackend = "opfs" | "idb";
+type OfflineBackend = "opfs" | "idb" | "cache";
 type StorageManagerWithOpfs = { getDirectory?: () => Promise<FileSystemDirectoryHandle> };
 
 export type OfflineStatus = "downloading" | "paused" | "ready" | "failed";
@@ -107,6 +109,80 @@ export async function openOfflineDatabase() {
     databasePromise = null;
     throw error;
   }
+}
+
+function cacheMetaRequest(id: string) {
+  return new Request(`/__offline/meta/${encodeURIComponent(id)}`);
+}
+
+function cacheChunkRequest(id: string, index: number) {
+  return new Request(`/__offline/chunk/${encodeURIComponent(id)}/${index}`);
+}
+
+async function getDownloadCache() {
+  return caches.open(DOWNLOAD_CACHE);
+}
+
+async function putCachedDownload(download: OfflineDownload) {
+  const cache = await getDownloadCache();
+  const { poster: _poster, ...serializable } = download;
+  await cache.put(cacheMetaRequest(download.id), new Response(JSON.stringify({ ...serializable, poster: null }), {
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  }));
+}
+
+async function getCachedDownload(id: string) {
+  const cache = await getDownloadCache();
+  const response = await cache.match(cacheMetaRequest(id));
+  return response ? await response.json() as OfflineDownload : null;
+}
+
+async function listCachedDownloads() {
+  const cache = await getDownloadCache();
+  const keys = await cache.keys();
+  const items: OfflineDownload[] = [];
+  for (const request of keys) {
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith("/__offline/meta/")) continue;
+    const response = await cache.match(request);
+    if (!response) continue;
+    try { items.push(await response.json() as OfflineDownload); } catch {}
+  }
+  return items;
+}
+
+async function putCachedChunk(mediaId: string, index: number, bytes: ArrayBuffer) {
+  const cache = await getDownloadCache();
+  await cache.put(cacheChunkRequest(mediaId, index), new Response(bytes, {
+    headers: { "Content-Type": "application/octet-stream" },
+  }));
+}
+
+async function getCachedChunk(mediaId: string, index: number) {
+  const cache = await getDownloadCache();
+  const response = await cache.match(cacheChunkRequest(mediaId, index));
+  return response ? await response.arrayBuffer() : null;
+}
+
+async function clearCachedDownload(id: string, chunkCount = 0) {
+  const cache = await getDownloadCache();
+  await cache.delete(cacheMetaRequest(id));
+  if (chunkCount > 0) {
+    for (let index = 0; index < chunkCount; index += 1) {
+      await cache.delete(cacheChunkRequest(id, index));
+    }
+    return;
+  }
+  const keys = await cache.keys();
+  const prefix = `/__offline/chunk/${encodeURIComponent(id)}/`;
+  await Promise.all(keys
+    .filter((request) => new URL(request.url).pathname.startsWith(prefix))
+    .map((request) => cache.delete(request)));
+}
+
+async function saveDownload(download: OfflineDownload) {
+  if (download.storageBackend === "cache") return putCachedDownload(download);
+  return putDownload(download);
 }
 
 function storageManager() {
@@ -211,7 +287,9 @@ export async function verifyOfflineDownload(download: OfflineDownload) {
   if (download.chunkCount < 1) return false;
   let storedBytes = 0;
   for (let index = 0; index < download.chunkCount; index += 1) {
-    const chunk = await getChunk(download.id, index);
+    const chunk = download.storageBackend === "cache"
+      ? await getCachedChunk(download.id, index)
+      : await getChunk(download.id, index);
     if (!chunk?.byteLength) return false;
     storedBytes += chunk.byteLength;
   }
@@ -219,17 +297,30 @@ export async function verifyOfflineDownload(download: OfflineDownload) {
 }
 
 export async function getOfflineDownload(id: string) {
+  const cached = await getCachedDownload(id).catch(() => null);
+  if (cached) return cached;
   return withDatabaseRetry(async (database) => {
     const result = await requestResult(database.transaction("downloads").objectStore("downloads").get(id)) as OfflineDownload | undefined;
     return result || null;
-  });
+  }).catch(() => null);
 }
 
 export async function listOfflineDownloads() {
-  return withDatabaseRetry(async (database) => {
-    const result = await requestResult(database.transaction("downloads").objectStore("downloads").getAll()) as OfflineDownload[];
-    return result.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  });
+  const merged = new Map<string, OfflineDownload>();
+
+  for (const item of await listCachedDownloads().catch(() => [] as OfflineDownload[])) {
+    merged.set(item.id, item);
+  }
+
+  const legacy = await withDatabaseRetry(async (database) =>
+    await requestResult(database.transaction("downloads").objectStore("downloads").getAll()) as OfflineDownload[]
+  ).catch(() => [] as OfflineDownload[]);
+
+  for (const item of legacy) {
+    if (!merged.has(item.id)) merged.set(item.id, item);
+  }
+
+  return [...merged.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 }
 
 export async function removeOfflineDownload(id: string) {
@@ -244,7 +335,8 @@ export async function removeOfflineDownload(id: string) {
   });
 
   await Promise.allSettled([
-    clearIdbChunks(id),
+    existing?.storageBackend === "idb" ? clearIdbChunks(id) : Promise.resolve(),
+    existing?.storageBackend === "cache" ? clearCachedDownload(id, existing.chunkCount) : Promise.resolve(),
     existing?.storageBackend === "opfs" ? removeOpfsFile(id) : Promise.resolve(),
   ]);
 }
@@ -280,10 +372,11 @@ async function supportsWritableOpfs() {
 }
 
 async function chooseBackend(existing: OfflineDownload | null): Promise<OfflineBackend> {
+  if (existing?.storageBackend === "cache") return "cache";
   if (existing?.storageBackend === "idb") return "idb";
   const writableOpfs = await supportsWritableOpfs();
-  if (existing?.storageBackend === "opfs") return writableOpfs ? "opfs" : "idb";
-  return writableOpfs ? "opfs" : "idb";
+  if (existing?.storageBackend === "opfs") return writableOpfs ? "opfs" : "cache";
+  return writableOpfs ? "opfs" : "cache";
 }
 
 async function opfsExistingSize(id: string) {
@@ -299,9 +392,8 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
 
   const backend = await chooseBackend(existing);
 
-  if (backend === "idb" && existing?.storageBackend === "opfs") {
+  if (backend === "cache" && existing?.storageBackend === "opfs") {
     await removeOpfsFile(movie.id).catch(() => undefined);
-    await clearIdbChunks(movie.id).catch(() => undefined);
     existing = null;
   }
 
@@ -363,7 +455,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
     error: null,
     poster: await artwork(movie),
     storageBackend: backend,
-    chunkSize: backend === "idb" ? CHUNK_SIZE : 0,
+    chunkSize: backend === "cache" ? CACHE_CHUNK_SIZE : backend === "idb" ? CHUNK_SIZE : 0,
   };
 
   download = {
@@ -371,13 +463,17 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
     size: total,
     downloadedBytes: offset,
     storageBackend: backend,
-    chunkSize: backend === "idb" ? (existing?.chunkSize || CHUNK_SIZE) : 0,
+    chunkSize: backend === "cache"
+      ? (existing?.chunkSize || CACHE_CHUNK_SIZE)
+      : backend === "idb"
+        ? (existing?.chunkSize || CHUNK_SIZE)
+        : 0,
     status: "downloading",
     error: null,
     updatedAt: now,
   };
 
-  await putDownload(download);
+  await saveDownload(download);
   onProgress(download);
 
   const reader = response.body.getReader();
@@ -405,7 +501,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
 
         if (offset - lastMetadataWrite >= 4 * 1024 * 1024) {
           download = { ...download, downloadedBytes: offset, updatedAt: new Date().toISOString() };
-          await putDownload(download);
+          await saveDownload(download);
           onProgress(download);
           lastMetadataWrite = offset;
         }
@@ -421,7 +517,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
         updatedAt: new Date().toISOString(),
         error: null,
       };
-      await putDownload(download);
+      await saveDownload(download);
 
       if (!await verifyOfflineDownload(download)) {
         download = {
@@ -430,7 +526,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
           error: "The saved copy is incomplete. Tap Resume to finish downloading it.",
           updatedAt: new Date().toISOString(),
         };
-        await putDownload(download);
+        await saveDownload(download);
         onProgress(download);
         throw new Error(download.error!);
       }
@@ -447,7 +543,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
         updatedAt: new Date().toISOString(),
         error: paused ? null : reason instanceof Error ? reason.message : "Download interrupted.",
       };
-      await putDownload(download);
+      await saveDownload(download);
       onProgress(download);
       if (!paused) throw reason;
       return download;
@@ -455,20 +551,22 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
   }
 
   let pending = new Uint8Array(0);
+  const activeChunkSize = download.chunkSize || (backend === "cache" ? CACHE_CHUNK_SIZE : CHUNK_SIZE);
+  const saveChunk = backend === "cache" ? putCachedChunk : putChunk;
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      if (!pending.length && value.length >= CHUNK_SIZE) {
+      if (!pending.length && value.length >= activeChunkSize) {
         let position = 0;
-        while (value.length - position >= CHUNK_SIZE) {
-          const chunk = value.slice(position, position + CHUNK_SIZE);
-          await putChunk(movie.id, chunkIndex, chunk.buffer);
+        while (value.length - position >= activeChunkSize) {
+          const chunk = value.slice(position, position + activeChunkSize);
+          await saveChunk(movie.id, chunkIndex, chunk.buffer);
           chunkIndex += 1;
           offset += chunk.length;
-          position += CHUNK_SIZE;
+          position += activeChunkSize;
         }
         pending = value.slice(position);
       } else {
@@ -478,24 +576,24 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
         pending = joined;
       }
 
-      while (pending.length >= CHUNK_SIZE) {
-        const chunk = pending.slice(0, CHUNK_SIZE);
-        pending = pending.slice(CHUNK_SIZE);
-        await putChunk(movie.id, chunkIndex, chunk.buffer);
+      while (pending.length >= activeChunkSize) {
+        const chunk = pending.slice(0, activeChunkSize);
+        pending = pending.slice(activeChunkSize);
+        await saveChunk(movie.id, chunkIndex, chunk.buffer);
         chunkIndex += 1;
         offset += chunk.length;
       }
 
       if (offset - lastMetadataWrite >= 4 * 1024 * 1024) {
         download = { ...download, downloadedBytes: offset, chunkCount: chunkIndex, updatedAt: new Date().toISOString() };
-        await putDownload(download);
+        await saveDownload(download);
         onProgress(download);
         lastMetadataWrite = offset;
       }
     }
 
     if (pending.length) {
-      await putChunk(movie.id, chunkIndex, pending.buffer);
+      await saveChunk(movie.id, chunkIndex, pending.buffer);
       chunkIndex += 1;
       offset += pending.length;
     }
@@ -509,7 +607,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
       updatedAt: new Date().toISOString(),
       error: null,
     };
-    await putDownload(download);
+    await saveDownload(download);
 
     if (!await verifyOfflineDownload(download)) {
       download = {
@@ -518,7 +616,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
         error: "The saved copy is incomplete. Tap Resume to finish downloading it.",
         updatedAt: new Date().toISOString(),
       };
-      await putDownload(download);
+      await saveDownload(download);
       onProgress(download);
       throw new Error(download.error!);
     }
@@ -535,7 +633,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
       updatedAt: new Date().toISOString(),
       error: paused ? null : reason instanceof Error ? reason.message : "Download interrupted.",
     };
-    await putDownload(download);
+    await saveDownload(download);
     onProgress(download);
     if (!paused) throw reason;
     return download;
