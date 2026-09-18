@@ -1,7 +1,7 @@
-const CACHE = "constants-hub-shell-v6";
+const CACHE = "constants-hub-shell-v7";
 const DB_NAME = "constants-hub-offline";
 const DB_VERSION = 1;
-const CHUNK_SIZE = 2 * 1024 * 1024;
+const LEGACY_CHUNK_SIZE = 2 * 1024 * 1024;
 const MAX_RANGE = 4 * 1024 * 1024;
 const SHELL = ["/tv", "/tv/offline", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
@@ -40,6 +40,20 @@ function mediaHeaders(metadata, length, extra = {}) {
   };
 }
 
+async function getOpfsFile(id) {
+  const manager = self.navigator?.storage;
+  if (!manager?.getDirectory) return null;
+  try {
+    const root = await manager.getDirectory();
+    const directory = await root.getDirectoryHandle("offline-media");
+    const handle = await directory.getFileHandle(`${encodeURIComponent(id)}.media`);
+    return await handle.getFile();
+  } catch (error) {
+    if (error && error.name === "NotFoundError") return null;
+    throw error;
+  }
+}
+
 async function offlineMedia(request, id) {
   const metadata = await getRecord("downloads", id);
   if (!metadata || metadata.status !== "ready") return new Response("Offline title not found.", { status: 404 });
@@ -47,12 +61,20 @@ async function offlineMedia(request, id) {
   const size = Number(metadata.size || 0);
   if (!size) return new Response("Offline title is invalid.", { status: 500 });
 
+  const opfsFile = metadata.storageBackend === "opfs" ? await getOpfsFile(id) : null;
+  if (metadata.storageBackend === "opfs" && (!opfsFile || opfsFile.size !== size)) {
+    return new Response("Offline file is missing or incomplete.", { status: 500 });
+  }
+
   if (request.method === "HEAD") {
     return new Response(null, { status: 200, headers: mediaHeaders(metadata, size) });
   }
 
   const range = request.headers.get("range");
   if (!range) {
+    if (opfsFile) {
+      return new Response(opfsFile.stream(), { status: 200, headers: mediaHeaders(metadata, size) });
+    }
     let index = 0;
     const stream = new ReadableStream({
       async pull(controller) {
@@ -93,22 +115,28 @@ async function offlineMedia(request, id) {
     return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
   }
 
-  const first = Math.floor(start / CHUNK_SIZE);
-  const last = Math.floor(end / CHUNK_SIZE);
-  const pieces = [];
+  let body;
+  if (opfsFile) {
+    body = new Uint8Array(await opfsFile.slice(start, end + 1).arrayBuffer());
+  } else {
+    const chunkSize = Number(metadata.chunkSize || LEGACY_CHUNK_SIZE);
+    const first = Math.floor(start / chunkSize);
+    const last = Math.floor(end / chunkSize);
+    const pieces = [];
 
-  for (let index = first; index <= last; index += 1) {
-    const chunk = await getRecord("chunks", `${id}:${index}`);
-    if (!chunk) return new Response("Offline video chunk is missing.", { status: 500 });
-    pieces.push(new Uint8Array(chunk.bytes));
+    for (let index = first; index <= last; index += 1) {
+      const chunk = await getRecord("chunks", `${id}:${index}`);
+      if (!chunk) return new Response("Offline video chunk is missing.", { status: 500 });
+      pieces.push(new Uint8Array(chunk.bytes));
+    }
+
+    const joined = new Uint8Array(pieces.reduce((total, item) => total + item.length, 0));
+    let position = 0;
+    for (const piece of pieces) { joined.set(piece, position); position += piece.length; }
+
+    const offset = start - first * chunkSize;
+    body = joined.slice(offset, offset + end - start + 1);
   }
-
-  const joined = new Uint8Array(pieces.reduce((total, item) => total + item.length, 0));
-  let position = 0;
-  for (const piece of pieces) { joined.set(piece, position); position += piece.length; }
-
-  const offset = start - first * CHUNK_SIZE;
-  const body = joined.slice(offset, offset + end - start + 1);
   return new Response(body, {
     status: 206,
     headers: mediaHeaders(metadata, body.length, { "Content-Range": `bytes ${start}-${end}/${size}` }),
