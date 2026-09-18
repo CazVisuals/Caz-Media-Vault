@@ -197,13 +197,31 @@ async function artwork(movie: Movie) {
   }
 }
 
-async function chooseBackend(existing: OfflineDownload | null): Promise<OfflineBackend> {
-  if (existing?.storageBackend) return existing.storageBackend;
+async function supportsWritableOpfs() {
+  const manager = storageManager();
+  if (!manager?.getDirectory) return false;
+
   try {
-    return storageManager()?.getDirectory ? "opfs" : "idb";
+    const root = await manager.getDirectory();
+    const directory = await root.getDirectoryHandle(OPFS_DIR, { create: true });
+    const probeName = ".write-probe";
+    const handle = await directory.getFileHandle(probeName, { create: true });
+    const candidate = handle as FileSystemFileHandle & {
+      createWritable?: (options?: { keepExistingData?: boolean }) => Promise<FileSystemWritableFileStream>;
+    };
+    const supported = typeof candidate.createWritable === "function";
+    await directory.removeEntry(probeName).catch(() => undefined);
+    return supported;
   } catch {
-    return "idb";
+    return false;
   }
+}
+
+async function chooseBackend(existing: OfflineDownload | null): Promise<OfflineBackend> {
+  if (existing?.storageBackend === "idb") return "idb";
+  const writableOpfs = await supportsWritableOpfs();
+  if (existing?.storageBackend === "opfs") return writableOpfs ? "opfs" : "idb";
+  return writableOpfs ? "opfs" : "idb";
 }
 
 async function opfsExistingSize(id: string) {
@@ -218,6 +236,13 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
   if (existing?.status === "ready" && await verifyOfflineDownload(existing)) return existing;
 
   const backend = await chooseBackend(existing);
+
+  if (backend === "idb" && existing?.storageBackend === "opfs") {
+    await removeOpfsFile(movie.id).catch(() => undefined);
+    await clearIdbChunks(movie.id).catch(() => undefined);
+    existing = null;
+  }
+
   let offset = existing?.downloadedBytes || 0;
   let chunkIndex = existing?.chunkCount || 0;
 
@@ -300,7 +325,13 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
     const directory = await getOpfsDirectory(true);
     if (!directory) throw new Error("This browser could not open device storage for offline playback.");
     const fileHandle = await directory.getFileHandle(opfsFileName(movie.id), { create: true });
-    const writable = await fileHandle.createWritable({ keepExistingData: true });
+    const writableHandle = fileHandle as FileSystemFileHandle & {
+      createWritable?: (options?: { keepExistingData?: boolean }) => Promise<FileSystemWritableFileStream>;
+    };
+    if (typeof writableHandle.createWritable !== "function") {
+      throw new Error("Writable OPFS is not supported by this browser.");
+    }
+    const writable = await writableHandle.createWritable({ keepExistingData: true });
     await writable.seek(offset);
 
     try {
