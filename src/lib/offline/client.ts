@@ -21,6 +21,7 @@ export type OfflineDownload = Pick<Movie, "id" | "title" | "year" | "fileName" |
   error: string | null;
   poster?: Blob | null;
   storageBackend?: OfflineBackend;
+  chunkSize?: number;
 };
 
 function requestResult<T>(request: IDBRequest<T>) {
@@ -275,6 +276,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
     error: null,
     poster: await artwork(movie),
     storageBackend: backend,
+    chunkSize: backend === "idb" ? CHUNK_SIZE : 0,
   };
 
   download = {
@@ -282,6 +284,7 @@ export async function downloadForOffline(movie: Movie, onProgress: (download: Of
     size: total,
     downloadedBytes: offset,
     storageBackend: backend,
+    chunkSize: backend === "idb" ? (existing?.chunkSize || CHUNK_SIZE) : 0,
     status: "downloading",
     error: null,
     updatedAt: now,
