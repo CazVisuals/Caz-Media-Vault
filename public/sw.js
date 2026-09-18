@@ -1,4 +1,4 @@
-const CACHE = "constants-hub-shell-v7";
+const CACHE = "constants-hub-shell-v8";
 const DB_NAME = "constants-hub-offline";
 const DB_VERSION = 1;
 const LEGACY_CHUNK_SIZE = 2 * 1024 * 1024;
@@ -180,6 +180,23 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.method !== "GET") return;
+
+  if (url.origin === self.location.origin && request.mode === "navigate" && url.pathname.startsWith("/tv")) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok && (url.pathname === "/tv" || url.pathname === "/tv/offline")) {
+            void caches.open(CACHE).then((cache) => cache.put(url.pathname, response.clone()));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cache = await caches.open(CACHE);
+          return (await cache.match("/tv/offline")) || new Response("Offline library unavailable. Reconnect once and open Downloads to prepare offline mode.", { status: 503 });
+        })
+    );
+    return;
+  }
 
   if (url.origin === self.location.origin && url.pathname.startsWith("/_next/static/")) {
     event.respondWith(cacheFirst(request).catch(() => caches.match(request)));
