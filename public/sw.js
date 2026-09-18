@@ -1,9 +1,9 @@
-const CACHE = "constants-hub-shell-v5";
+const CACHE = "constants-hub-shell-v6";
 const DB_NAME = "constants-hub-offline";
 const DB_VERSION = 1;
 const CHUNK_SIZE = 2 * 1024 * 1024;
 const MAX_RANGE = 4 * 1024 * 1024;
-const SHELL = ["/tv", "/tv/offline", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
+const SHELL = ["/tv", "/tv/offline", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -11,7 +11,10 @@ function openDatabase() {
     request.onupgradeneeded = () => {
       const database = request.result;
       if (!database.objectStoreNames.contains("downloads")) database.createObjectStore("downloads", { keyPath: "id" });
-      if (!database.objectStoreNames.contains("chunks")) { const store = database.createObjectStore("chunks", { keyPath: "key" }); store.createIndex("byMedia", "mediaId", { unique: false }); }
+      if (!database.objectStoreNames.contains("chunks")) {
+        const store = database.createObjectStore("chunks", { keyPath: "key" });
+        store.createIndex("byMedia", "mediaId", { unique: false });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -27,38 +30,153 @@ async function getRecord(store, key) {
   });
 }
 
+function mediaHeaders(metadata, length, extra = {}) {
+  return {
+    "Content-Type": metadata.mime || "video/mp4",
+    "Content-Length": String(length),
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "no-store",
+    ...extra,
+  };
+}
+
 async function offlineMedia(request, id) {
   const metadata = await getRecord("downloads", id);
   if (!metadata || metadata.status !== "ready") return new Response("Offline title not found.", { status: 404 });
-  const size = metadata.size;
+
+  const size = Number(metadata.size || 0);
+  if (!size) return new Response("Offline title is invalid.", { status: 500 });
+
+  if (request.method === "HEAD") {
+    return new Response(null, { status: 200, headers: mediaHeaders(metadata, size) });
+  }
+
   const range = request.headers.get("range");
   if (!range) {
     let index = 0;
-    const stream = new ReadableStream({ async pull(controller) { if (index >= metadata.chunkCount) { controller.close(); return; } const chunk = await getRecord("chunks", `${id}:${index}`); if (!chunk) { controller.error(new Error("Offline video chunk is missing.")); return; } controller.enqueue(new Uint8Array(chunk.bytes)); index += 1; } });
-    return new Response(stream, { status: 200, headers: { "Content-Type": metadata.mime, "Content-Length": String(size), "Accept-Ranges": "bytes", "Cache-Control": "no-store" } });
+    const stream = new ReadableStream({
+      async pull(controller) {
+        if (index >= metadata.chunkCount) { controller.close(); return; }
+        const chunk = await getRecord("chunks", `${id}:${index}`);
+        if (!chunk) { controller.error(new Error("Offline video chunk is missing.")); return; }
+        controller.enqueue(new Uint8Array(chunk.bytes));
+        index += 1;
+      },
+    });
+    return new Response(stream, { status: 200, headers: mediaHeaders(metadata, size) });
   }
-  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-  if (!match) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
-  const start = match[1] ? Number(match[1]) : 0;
-  let end = match[2] ? Number(match[2]) : Math.min(size - 1, start + MAX_RANGE - 1);
-  end = Math.min(end, start + MAX_RANGE - 1, size - 1);
-  if (start < 0 || end < start || start >= size) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
-  const first = Math.floor(start / CHUNK_SIZE); const last = Math.floor(end / CHUNK_SIZE);
+
+  const match = /^bytes=(\d*)-(\d*)$/u.exec(range.trim());
+  if (!match || (!match[1] && !match[2])) {
+    return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+  }
+
+  let start;
+  let end;
+
+  if (!match[1]) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+    }
+    start = Math.max(size - suffixLength, 0);
+    end = size - 1;
+    if (end - start + 1 > MAX_RANGE) start = Math.max(end - MAX_RANGE + 1, 0);
+  } else {
+    start = Number(match[1]);
+    end = match[2] ? Number(match[2]) : Math.min(size - 1, start + MAX_RANGE - 1);
+    if (end - start + 1 > MAX_RANGE) end = start + MAX_RANGE - 1;
+  }
+
+  end = Math.min(end, size - 1);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) {
+    return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+  }
+
+  const first = Math.floor(start / CHUNK_SIZE);
+  const last = Math.floor(end / CHUNK_SIZE);
   const pieces = [];
-  for (let index = first; index <= last; index += 1) { const chunk = await getRecord("chunks", `${id}:${index}`); if (!chunk) return new Response("Offline video chunk is missing.", { status: 500 }); pieces.push(new Uint8Array(chunk.bytes)); }
-  const joined = new Uint8Array(pieces.reduce((total, item) => total + item.length, 0)); let position = 0; for (const piece of pieces) { joined.set(piece, position); position += piece.length; }
-  const offset = start - first * CHUNK_SIZE; const body = joined.slice(offset, offset + end - start + 1);
-  return new Response(body, { status: 206, headers: { "Content-Type": metadata.mime, "Content-Length": String(body.length), "Content-Range": `bytes ${start}-${end}/${size}`, "Accept-Ranges": "bytes", "Cache-Control": "no-store" } });
+
+  for (let index = first; index <= last; index += 1) {
+    const chunk = await getRecord("chunks", `${id}:${index}`);
+    if (!chunk) return new Response("Offline video chunk is missing.", { status: 500 });
+    pieces.push(new Uint8Array(chunk.bytes));
+  }
+
+  const joined = new Uint8Array(pieces.reduce((total, item) => total + item.length, 0));
+  let position = 0;
+  for (const piece of pieces) { joined.set(piece, position); position += piece.length; }
+
+  const offset = start - first * CHUNK_SIZE;
+  const body = joined.slice(offset, offset + end - start + 1);
+  return new Response(body, {
+    status: 206,
+    headers: mediaHeaders(metadata, body.length, { "Content-Range": `bytes ${start}-${end}/${size}` }),
+  });
 }
 
-self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => Promise.allSettled(SHELL.map((url) => cache.add(url)))).then(() => self.skipWaiting())));
-self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())));
+async function cacheFirst(request) {
+  const cache = await caches.open(CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (response.ok) await cache.put(request, response.clone());
+  return response;
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => Promise.allSettled(SHELL.map((url) => cache.add(url))))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(
+        keys.filter((key) => key.startsWith("constants-hub-shell-") && key !== CACHE).map((key) => caches.delete(key))
+      ))
+      .then(() => self.clients.claim())
+  );
+});
+
 self.addEventListener("fetch", (event) => {
-  const request = event.request; const url = new URL(request.url);
+  const request = event.request;
+  const url = new URL(request.url);
+
+  if (url.pathname.startsWith("/__offline/media/") && (request.method === "GET" || request.method === "HEAD")) {
+    event.respondWith(offlineMedia(request, decodeURIComponent(url.pathname.split("/").pop() || "")));
+    return;
+  }
+
   if (request.method !== "GET") return;
-  if (url.pathname.startsWith("/__offline/media/")) { event.respondWith(offlineMedia(request, decodeURIComponent(url.pathname.split("/").pop()))); return; }
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/_next/") || url.pathname.startsWith("/settings") || url.pathname.startsWith("/organize") || url.pathname.startsWith("/login") || url.pathname.startsWith("/invite/")) return;
+
+  if (url.origin === self.location.origin && url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(cacheFirst(request).catch(() => caches.match(request)));
+    return;
+  }
+
+  if (
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/settings") ||
+    url.pathname.startsWith("/organize") ||
+    url.pathname.startsWith("/login") ||
+    url.pathname.startsWith("/invite/")
+  ) return;
+
   const cacheable = SHELL.includes(url.pathname) || url.pathname.startsWith("/icon-") || url.pathname === "/icon.svg";
   if (!cacheable) return;
-  event.respondWith(fetch(request).then((response) => { if (response.ok && request.destination !== "video") void caches.open(CACHE).then((cache) => cache.put(request, response.clone())); return response; }).catch(() => caches.match(request).then((cached) => cached || (request.mode === "navigate" ? caches.match("/tv/offline") : undefined) || new Response("Offline", { status: 503 }))));
+
+  event.respondWith(
+    fetch(request)
+      .then((response) => {
+        if (response.ok && request.destination !== "video") void caches.open(CACHE).then((cache) => cache.put(request, response.clone()));
+        return response;
+      })
+      .catch(() => caches.match(request).then(
+        (cached) => cached || (request.mode === "navigate" ? caches.match("/tv/offline") : undefined) || new Response("Offline", { status: 503 })
+      ))
+  );
 });
