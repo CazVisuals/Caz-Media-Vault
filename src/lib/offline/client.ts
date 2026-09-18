@@ -31,7 +31,13 @@ function requestResult<T>(request: IDBRequest<T>) {
   });
 }
 
-export function openOfflineDatabase() {
+let databasePromise: Promise<IDBDatabase> | null = null;
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function openOfflineDatabaseOnce() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
@@ -42,9 +48,41 @@ export function openOfflineDatabase() {
         store.createIndex("byMedia", "mediaId", { unique: false });
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const database = request.result;
+      database.onversionchange = () => {
+              databasePromise = null;
+      };
+      resolve(database);
+    };
     request.onerror = () => reject(request.error || new Error("Could not open offline storage."));
+    request.onblocked = () => reject(new Error("Offline storage is temporarily busy."));
   });
+}
+
+export async function openOfflineDatabase() {
+  if (databasePromise) return databasePromise;
+
+  databasePromise = (async () => {
+    let lastError: unknown;
+    for (const wait of [0, 150, 400, 900]) {
+      if (wait) await delay(wait);
+      try {
+        return await openOfflineDatabaseOnce();
+      } catch (error) {
+        lastError = error;
+        databasePromise = null;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Could not open offline storage.");
+  })();
+
+  try {
+    return await databasePromise;
+  } catch (error) {
+    databasePromise = null;
+    throw error;
+  }
 }
 
 function storageManager() {
@@ -93,7 +131,6 @@ async function putDownload(download: OfflineDownload) {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
   });
-  database.close();
 }
 
 async function putChunk(mediaId: string, index: number, bytes: ArrayBuffer) {
@@ -104,13 +141,11 @@ async function putChunk(mediaId: string, index: number, bytes: ArrayBuffer) {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
   });
-  database.close();
 }
 
 async function getChunk(mediaId: string, index: number) {
   const database = await openOfflineDatabase();
   const result = await requestResult(database.transaction("chunks").objectStore("chunks").get(`${mediaId}:${index}`)) as { bytes?: ArrayBuffer } | undefined;
-  database.close();
   return result?.bytes || null;
 }
 
@@ -130,7 +165,6 @@ async function clearIdbChunks(id: string) {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
   });
-  database.close();
 }
 
 export async function verifyOfflineDownload(download: OfflineDownload) {
@@ -158,14 +192,12 @@ export async function verifyOfflineDownload(download: OfflineDownload) {
 export async function getOfflineDownload(id: string) {
   const database = await openOfflineDatabase();
   const result = await requestResult(database.transaction("downloads").objectStore("downloads").get(id)) as OfflineDownload | undefined;
-  database.close();
   return result || null;
 }
 
 export async function listOfflineDownloads() {
   const database = await openOfflineDatabase();
   const result = await requestResult(database.transaction("downloads").objectStore("downloads").getAll()) as OfflineDownload[];
-  database.close();
   return result.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
 }
 
@@ -179,7 +211,6 @@ export async function removeOfflineDownload(id: string) {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
   });
-  database.close();
 
   await Promise.allSettled([
     clearIdbChunks(id),
